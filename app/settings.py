@@ -20,12 +20,13 @@ def _load_dotenv():
     explicit $env: value still wins. No external dependency."""
     for cand in (Path(__file__).resolve().parent.parent / ".env", Path.cwd() / ".env"):
         if cand.exists():
-            for line in cand.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
+            # utf-8-sig strips a Notepad-added BOM; also defensively strip it per-key
+            for line in cand.read_text(encoding="utf-8-sig").splitlines():
+                line = line.lstrip("\ufeff").strip()
                 if not line or line.startswith("#") or "=" not in line:
                     continue
                 k, v = line.split("=", 1)
-                k = k.strip()
+                k = k.strip().lstrip("\ufeff")
                 v = v.strip().strip('"').strip("'")
                 if k and k not in os.environ:
                     os.environ[k] = v
