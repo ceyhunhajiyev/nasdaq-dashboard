@@ -16,6 +16,7 @@ from .constituents import load_constituents, INDEX_PROXY
 from .news import NewsAggregator
 from . import analysis
 from . import metals as metals_mod
+from . import signals as signals_mod
 
 app = FastAPI(title="Nasdaq-100 Internals Dashboard")
 
@@ -157,6 +158,31 @@ def metals(refresh: bool = False):
 @app.get("/metals")
 def metals_page():
     return FileResponse(_STATIC / "metals.html")
+
+
+# --- signals (custom chart w/ entry/SL/TP) ----------------------------------
+_sig_cache: dict = {}
+
+
+@app.get("/api/signals")
+def api_signals(instrument: str = "US100", refresh: bool = False):
+    key = instrument.upper()
+    entry = _sig_cache.get(key)
+    now = time.time()
+    if refresh or not entry or now - entry["ts"] > 300:
+        try:
+            data = signals_mod.build_signals(key, PROVIDER)
+        except Exception as e:
+            return {"error": str(e), "instrument": key, "ohlc": [], "signal": {}}
+        _sig_cache[key] = {"ts": now, "data": data}
+    out = dict(_sig_cache[key]["data"])
+    out["timestamp"] = _sig_cache[key]["ts"]
+    return out
+
+
+@app.get("/signals")
+def signals_page():
+    return FileResponse(_STATIC / "signals.html")
 
 
 # --- frontend ---------------------------------------------------------------

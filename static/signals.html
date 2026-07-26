@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Signals</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0e141c; --panel:#151d28; --panel-2:#1b2531; --line:#26313f;
+    --ink:#e8edf2; --ink-dim:#8b97a6; --ink-faint:#5c6675;
+    --bull:#3fb98f; --bear:#e5654b; --amber:#f2b544; --steel:#5b8fb0; --blue:#2f81f7;
+    --mono:'IBM Plex Mono',ui-monospace,monospace; --disp:'Space Grotesk',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box} html,body{margin:0}
+  body{background:var(--bg); color:var(--ink); font-family:var(--disp); padding:0 0 48px; -webkit-font-smoothing:antialiased}
+  a{color:var(--steel); text-decoration:none}
+  header{display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:14px 22px; border-bottom:1px solid var(--line); background:linear-gradient(180deg,#121a24,#0e141c); position:sticky; top:0; z-index:10}
+  .brand{font-weight:700; letter-spacing:.14em; font-size:14px} .brand b{color:var(--amber)}
+  .navlink{font-family:var(--mono); font-size:11px; letter-spacing:.06em; color:var(--steel); border:1px solid var(--line); border-radius:999px; padding:3px 10px; text-transform:uppercase}
+  .spacer{flex:1}
+  .updated{font-family:var(--mono); font-size:11px; color:var(--ink-faint)}
+  select,button{font-family:var(--disp); font-weight:600; font-size:13px; color:var(--ink); background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:7px 12px; cursor:pointer}
+  main{max-width:1200px; margin:0 auto; padding:22px}
+  .eyebrow{font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-faint); margin:0 0 10px}
+  .instrument-title{font-size:22px; font-weight:700; margin:0 0 12px} .instrument-title span{color:var(--ink-faint); font-family:var(--mono); font-size:13px; font-weight:400}
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px}
+  .tvbox{padding:8px; margin-bottom:16px} .tvwrap{height:360px}
+  .layout{display:grid; grid-template-columns:1fr 300px; gap:16px; align-items:start}
+  #chart{height:380px; width:100%}
+  .sig .badge{display:inline-block; font-family:var(--mono); font-size:11px; letter-spacing:.06em; text-transform:uppercase; padding:4px 10px; border-radius:6px; margin-bottom:12px}
+  .b-long{background:var(--bull); color:#06110d} .b-short{background:var(--bear); color:#160604} .b-none{border:1px solid var(--line); color:var(--ink-dim)}
+  .b-fresh{background:var(--amber); color:#160f02; margin-left:6px}
+  .lvl{display:flex; justify-content:space-between; font-family:var(--mono); font-size:13px; padding:8px 0; border-bottom:1px solid #1c2530}
+  .lvl:last-child{border-bottom:none}
+  .lvl .k{color:var(--ink-faint); text-transform:uppercase; font-size:10.5px; letter-spacing:.06em}
+  .lvl .v{font-weight:600}
+  .v.entry{color:var(--blue)} .v.sl{color:var(--bear)} .v.tp{color:var(--bull)}
+  .reason{font-family:var(--mono); font-size:12px; color:var(--ink-dim); margin-top:12px; line-height:1.5}
+  .chartcap{font-family:var(--mono); font-size:10.5px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.08em; margin-bottom:8px}
+  footer{max-width:1200px; margin:22px auto 0; padding:0 22px; color:var(--ink-faint); font-size:12px; font-family:var(--mono); line-height:1.7}
+  .state{padding:40px 16px; text-align:center; color:var(--ink-dim); font-family:var(--mono)}
+  @media(max-width:900px){.layout{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">SIGNALS <b>1H</b></div>
+  <a href="/" class="navlink">← Internals</a>
+  <a href="/metals" class="navlink">Metals</a>
+  <div class="spacer"></div>
+  <select id="inst">
+    <option value="US100">US100 · Nasdaq-100</option>
+    <option value="SP500">SP500 · S&amp;P 500</option>
+    <option value="US30">US30 · Dow</option>
+    <option value="XAU">XAU · Gold</option>
+    <option value="XAG">XAG · Silver</option>
+    <option value="XCU">XCU · Copper</option>
+  </select>
+  <div class="updated" id="updated">—</div>
+  <button id="refresh">Refresh</button>
+</header>
+
+<main>
+  <h1 class="instrument-title" id="title">—</h1>
+
+  <div class="panel tvbox">
+    <div class="chartcap">Real-time chart (TradingView) — live price &amp; instrument reference</div>
+    <div class="tvwrap" id="tv"></div>
+  </div>
+
+  <p class="eyebrow">1H sweep-reclaim signal — levels drawn on chart</p>
+  <div class="layout">
+    <div class="panel">
+      <div class="chartcap" id="sigCap">Signal chart</div>
+      <div id="chart"></div>
+      <div class="state" id="chartState" style="display:none"></div>
+    </div>
+    <div class="panel sig">
+      <span class="badge b-none" id="sigBadge">—</span>
+      <div id="levels"></div>
+      <div class="reason" id="reason"></div>
+    </div>
+  </div>
+</main>
+<footer id="foot"></footer>
+
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const INSTRUMENTS={
+  US100:{tv:'OANDA:NAS100USD', label:'US100', name:'Nasdaq-100', src:'Nasdaq futures (NQ)'},
+  SP500:{tv:'OANDA:SPX500USD', label:'SP500', name:'S&P 500',    src:'S&P futures (ES)'},
+  US30: {tv:'OANDA:US30USD',   label:'US30',  name:'Dow Jones',  src:'Dow futures (YM)'},
+  XAU:  {tv:'OANDA:XAUUSD',    label:'XAU',   name:'Gold',       src:'Gold futures (GC)'},
+  XAG:  {tv:'OANDA:XAGUSD',    label:'XAG',   name:'Silver',     src:'Silver futures (SI)'},
+  XCU:  {tv:'OANDA:XCUUSD',    label:'XCU',   name:'Copper',     src:'Copper futures (HG)'},
+};
+let chart, series, priceLines=[];
+function initChart(){
+  const el=$('chart');
+  chart=LightweightCharts.createChart(el,{width:el.clientWidth, height:380,
+    layout:{background:{color:'#151d28'}, textColor:'#8b97a6'},
+    grid:{vertLines:{color:'#1c2530'}, horzLines:{color:'#1c2530'}},
+    rightPriceScale:{borderColor:'#26313f'}, timeScale:{borderColor:'#26313f', timeVisible:true, secondsVisible:false},
+    crosshair:{mode:0}});
+  series=chart.addCandlestickSeries({upColor:'#3fb98f', downColor:'#e5654b', borderVisible:false, wickUpColor:'#3fb98f', wickDownColor:'#e5654b'});
+  window.addEventListener('resize',()=>chart.applyOptions({width:el.clientWidth}));
+}
+function buildTV(sym){
+  $('tv').innerHTML='';
+  if(!window.TradingView) return;
+  new TradingView.widget({container_id:'tv', symbol:sym, interval:'60', timezone:'Etc/UTC',
+    theme:'dark', style:'1', locale:'en', autosize:true, toolbar_bg:'#151d28',
+    hide_legend:false, save_image:false, backgroundColor:'#151d28', gridColor:'#26313f'});
+}
+function clearLines(){ priceLines.forEach(l=>series.removePriceLine(l)); priceLines=[]; }
+function addLine(price,color,title){ if(price==null) return; priceLines.push(series.createPriceLine({price, color, lineWidth:2, lineStyle:2, axisLabelVisible:true, title})); }
+function ago(ts){ const s=Math.max(0,Math.round(Date.now()/1000-ts)); return s<60?`${s}s ago`:s<3600?`${Math.round(s/60)}m ago`:`${Math.round(s/3600)}h ago`; }
+
+async function load(refresh=false){
+  const inst=$('inst').value; const meta=INSTRUMENTS[inst];
+  $('title').innerHTML=`${meta.label} <span>· ${meta.name} · 1H · levels from ${meta.src}</span>`;
+  $('sigCap').textContent='Signal chart · '+meta.label+' 1H · '+meta.src;
+  try{
+    const r=await fetch('/api/signals?instrument='+inst+(refresh?'&refresh=true':''));
+    const d=await r.json();
+    if(d.error){ $('chartState').style.display='block'; $('chartState').textContent='No data — '+d.error; return; }
+    const ohlc=d.ohlc||[];
+    if(!ohlc.length){ $('chartState').style.display='block'; $('chartState').textContent='No signal data for '+inst+' right now (Yahoo intraday may be unavailable — the TradingView chart above still shows live price).'; series.setData([]); clearLines(); return; }
+    $('chartState').style.display='none';
+    series.setData(ohlc); chart.timeScale().fitContent(); clearLines();
+    const sig=(d.signal||{}).last, fresh=(d.signal||{}).fresh;
+    $('updated').textContent=d.timestamp?'updated '+ago(d.timestamp):'';
+    if(sig){
+      addLine(sig.entry,'#2f81f7','Entry'); addLine(sig.sl,'#e5654b','SL');
+      addLine(sig.tp1,'#3fb98f','TP1'); addLine(sig.tp2,'#3fb98f','TP2');
+      series.setMarkers([{time:sig.time, position:sig.signal==='long'?'belowBar':'aboveBar', color:sig.signal==='long'?'#3fb98f':'#e5654b', shape:sig.signal==='long'?'arrowUp':'arrowDown', text:sig.signal.toUpperCase()}]);
+      const b=$('sigBadge'); b.textContent=sig.signal.toUpperCase(); b.className='badge '+(sig.signal==='long'?'b-long':'b-short');
+      $('levels').innerHTML=
+        `<div class="lvl"><span class="k">Entry</span><span class="v entry">${sig.entry}</span></div>`+
+        `<div class="lvl"><span class="k">Stop loss</span><span class="v sl">${sig.sl}</span></div>`+
+        `<div class="lvl"><span class="k">TP1 (1R)</span><span class="v tp">${sig.tp1}</span></div>`+
+        `<div class="lvl"><span class="k">TP2 (${sig.rr}R)</span><span class="v tp">${sig.tp2}</span></div>`+
+        (fresh?'<div style="margin-top:10px"><span class="badge b-fresh">NEW — on latest 1H bar</span></div>':'<div style="margin-top:10px;font-family:var(--mono);font-size:11px;color:var(--ink-faint)">most recent setup (not the current bar)</div>');
+      $('reason').textContent=sig.reason+'.';
+    }else{
+      series.setMarkers([]); const b=$('sigBadge'); b.textContent='NO SETUP'; b.className='badge b-none';
+      $('levels').innerHTML='<div class="lvl"><span class="k">Status</span><span class="v">waiting for a sweep-reclaim</span></div>';
+      $('reason').textContent='No sweep-reclaim in recent 1H bars.';
+    }
+  }catch(e){ $('chartState').style.display='block'; $('chartState').textContent='Error — '+e.message; }
+  $('foot').innerHTML='Live chart: TradingView (OANDA feed). Signal levels: computed on Yahoo index/commodity futures — scale-correct but a small offset from any single broker\'s price. For levels tick-matched to your XM execution, wire the MT5 feed.<br>Rules-based decision-support — not a validated edge and not financial advice.';
+}
+$('refresh').onclick=()=>load(true);
+$('inst').onchange=()=>{ buildTV(INSTRUMENTS[$('inst').value].tv); load(false); };
+initChart(); buildTV(INSTRUMENTS['US100'].tv); load(false);
+setInterval(()=>load(false), 3600000);
+</script>
+</body>
+</html>
