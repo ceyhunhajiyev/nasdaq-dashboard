@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Metals + SMT</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0e141c; --panel:#151d28; --panel-2:#1b2531; --line:#26313f;
+    --ink:#e8edf2; --ink-dim:#8b97a6; --ink-faint:#5c6675;
+    --bull:#3fb98f; --bull-dim:#1e5a48; --bear:#e5654b; --amber:#f2b544; --steel:#5b8fb0;
+    --mono:'IBM Plex Mono',ui-monospace,monospace; --disp:'Space Grotesk',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box} html,body{margin:0}
+  body{background:var(--bg); color:var(--ink); font-family:var(--disp); font-size:15px; padding:0 0 48px; -webkit-font-smoothing:antialiased}
+  a{color:var(--steel); text-decoration:none}
+  header{display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:14px 22px; border-bottom:1px solid var(--line); background:linear-gradient(180deg,#121a24,#0e141c); position:sticky; top:0; z-index:10}
+  .brand{font-weight:700; letter-spacing:.14em; font-size:14px} .brand b{color:var(--amber)}
+  .navlink{font-family:var(--mono); font-size:11px; letter-spacing:.06em; color:var(--steel); border:1px solid var(--line); border-radius:999px; padding:3px 10px; text-transform:uppercase}
+  .spacer{flex:1}
+  .updated{font-family:var(--mono); font-size:11px; color:var(--ink-faint)}
+  button{font-family:var(--disp); font-weight:600; font-size:13px; color:var(--ink); background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:7px 14px; cursor:pointer}
+  button:hover{border-color:var(--steel)}
+  main{max-width:1320px; margin:0 auto; padding:22px}
+  .eyebrow{font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-faint); margin:0 0 10px}
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px 22px}
+  .charts{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:20px}
+  .chartbox{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:8px}
+  .chartbox .cap{font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-dim); padding:6px 8px 8px}
+  .tvwrap{height:300px}
+
+  /* SMT */
+  .smt{margin-bottom:20px}
+  .smt .tag{display:inline-block; font-family:var(--mono); font-size:12px; letter-spacing:.08em; text-transform:uppercase; padding:4px 10px; border-radius:6px; margin-bottom:12px}
+  .tag.aligned{color:var(--ink-dim); border:1px solid var(--line)}
+  .tag.warn{color:var(--amber); border:1px solid #4a3a17; background:#20190a}
+  .smt p{margin:0; font-size:16px; line-height:1.5}
+
+  /* metal bias cards */
+  .metals{display:grid; grid-template-columns:repeat(3,1fr); gap:16px}
+  .mcard .mhead{display:flex; align-items:baseline; gap:10px}
+  .mcard .mname{font-size:20px; font-weight:700}
+  .mcard .mchg{font-family:var(--mono); font-size:14px}
+  .mcard .mbias{font-family:var(--mono); font-size:12px; margin-left:auto; padding:3px 9px; border-radius:6px}
+  .scorebar{height:7px; border-radius:999px; background:var(--panel-2); margin:14px 0; overflow:hidden}
+  .scorebar>i{display:block; height:100%; border-radius:999px}
+  .factors{display:flex; flex-direction:column; gap:6px}
+  .factor{display:flex; align-items:center; gap:9px; font-size:12px}
+  .factor .fdot{width:7px; height:7px; border-radius:50%; flex:none}
+  .factor .fname{width:120px; color:var(--ink); font-family:var(--mono); font-size:10px; text-transform:uppercase}
+  .factor .fdetail{color:var(--ink-dim); font-family:var(--mono); font-size:11px}
+  .dot-bull{background:var(--bull)} .dot-bear{background:var(--bear)} .dot-neutral{background:var(--ink-faint)} .dot-caution{background:var(--amber)}
+  .up{color:var(--bull)} .down{color:var(--bear)}
+  footer{max-width:1320px; margin:22px auto 0; padding:0 22px; color:var(--ink-faint); font-size:12px; font-family:var(--mono); line-height:1.7}
+  .state{padding:60px 22px; text-align:center; color:var(--ink-dim); font-family:var(--mono)}
+  @media(max-width:1050px){.charts,.metals{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">METALS <b>+ SMT</b></div>
+  <a href="/" class="navlink">← NDX Internals</a>
+  <div class="spacer"></div>
+  <div class="updated" id="updated">—</div>
+  <button id="refresh">Refresh</button>
+</header>
+
+<main>
+  <p class="eyebrow">Live charts — XAU · XAG · XCU</p>
+  <section class="charts" id="charts"></section>
+
+  <div class="state" id="state">Loading metals…</div>
+  <div id="content" style="display:none">
+    <p class="eyebrow">SMT — inter-market divergence</p>
+    <section class="panel smt">
+      <span class="tag aligned" id="smtTag">—</span>
+      <p id="smtNote">—</p>
+    </section>
+
+    <p class="eyebrow">Per-metal bias</p>
+    <section class="metals" id="metals"></section>
+  </div>
+</main>
+
+<footer id="foot"></footer>
+
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const CHARTS=[
+  {id:'tv_xau', symbol:'OANDA:XAUUSD', title:'XAU · Gold'},
+  {id:'tv_xag', symbol:'OANDA:XAGUSD', title:'XAG · Silver'},
+  {id:'tv_xcu', symbol:'OANDA:XCUUSD', title:'XCU · Copper'},
+];
+function buildCharts(){
+  $('charts').innerHTML=CHARTS.map(c=>`<div class="chartbox"><div class="cap">${c.title}</div><div class="tvwrap" id="${c.id}"></div></div>`).join('');
+  if(!window.TradingView) return;
+  CHARTS.forEach(c=>new TradingView.widget({container_id:c.id,symbol:c.symbol,interval:'60',timezone:'Etc/UTC',theme:'dark',style:'1',locale:'en',autosize:true,toolbar_bg:'#151d28',hide_legend:false,save_image:false,backgroundColor:'#151d28',gridColor:'#26313f'}));
+}
+function fmtPct(v){ if(v==null) return '—'; return (v>=0?'+':'')+v.toFixed(2)+'%'; }
+function biasColor(s){ if(s==null) return 'var(--line)'; if(s>=60) return 'var(--bull)'; if(s<=40) return 'var(--bear)'; return 'var(--steel)'; }
+function ago(ts){ const s=Math.max(0,Math.round(Date.now()/1000-ts)); return s<60?`${s}s ago`:`${Math.round(s/60)}m ago`; }
+
+async function load(refresh=false){
+  try{
+    const r=await fetch('/api/metals'+(refresh?'?refresh=true':'')); const d=await r.json();
+    if(d.error){ $('state').style.display='block'; $('content').style.display='none'; $('state').textContent='Metals data unavailable — '+d.error; return; }
+    render(d);
+  }catch(e){ $('state').style.display='block'; $('content').style.display='none'; $('state').textContent='Metals unavailable — '+e.message; }
+}
+function render(d){
+  $('state').style.display='none'; $('content').style.display='block';
+  $('updated').textContent=d.timestamp?'updated '+ago(d.timestamp):'';
+  const smt=d.smt||{};
+  const warn=(smt.state||'').endsWith('divergence');
+  const tag=$('smtTag'); tag.textContent=(smt.state||'—').replace(/_/g,' '); tag.className='tag '+(warn?'warn':'aligned');
+  $('smtNote').textContent=smt.detail||'—';
+
+  const order=['XAU','XAG','XCU'];
+  $('metals').innerHTML=order.map(k=>{
+    const m=(d.metals||{})[k]; if(!m) return '';
+    const s=m.bias||{}; const chgCls=m.change_pct>=0?'up':'down';
+    const factors=(s.factors||[]).map(f=>`<div class="factor"><span class="fdot dot-${f.signal}"></span><span class="fname">${f.name}</span><span class="fdetail">${f.detail}</span></div>`).join('');
+    return `<div class="panel mcard">
+      <div class="mhead"><span class="mname">${k}</span><span class="mchg ${chgCls}">${fmtPct(m.change_pct)}</span>
+        <span class="mbias" style="background:${biasColor(s.score)};color:#06110d">${s.bias||'—'}</span></div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--ink-faint)">${m.name} · ${m.last!=null?m.last:'—'} · ${s.score!=null?s.score+'/100':''}</div>
+      <div class="scorebar"><i style="width:${s.score||0}%;background:${biasColor(s.score)}"></i></div>
+      <div class="factors">${factors}</div>
+    </div>`;
+  }).join('');
+
+  $('foot').innerHTML='Data: Yahoo futures (GC/SI/HG) — directional proxy for spot XAU/XAG/XCU. SMT is a transparent divergence check. Charts are TradingView\'s feed.<br>Analytical context only — not a trade signal and not financial advice.';
+}
+$('refresh').onclick=()=>load(true);
+buildCharts(); load(false);
+setInterval(()=>load(false), 60000);
+</script>
+</body>
+</html>
