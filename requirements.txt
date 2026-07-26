@@ -1,0 +1,6 @@
+fastapi>=0.110
+uvicorn>=0.29
+pandas>=2.0
+numpy>=1.24
+yfinance>=0.2.40
+# MetaTrader5  -> install ONLY on Windows for phase 2 (pip install MetaTrader5)

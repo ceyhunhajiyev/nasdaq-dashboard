@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>NDX Internals</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0e141c; --panel:#151d28; --panel-2:#1b2531; --line:#26313f;
+    --ink:#e8edf2; --ink-dim:#8b97a6; --ink-faint:#5c6675;
+    --bull:#3fb98f; --bull-dim:#1e5a48; --bear:#e5654b; --bear-dim:#5e2c22;
+    --amber:#f2b544; --steel:#5b8fb0;
+    --mono:'IBM Plex Mono',ui-monospace,monospace;
+    --disp:'Space Grotesk',system-ui,sans-serif;
+  }
+  *{box-sizing:border-box} html,body{margin:0}
+  body{background:var(--bg); color:var(--ink); font-family:var(--disp); font-size:15px; line-height:1.45; -webkit-font-smoothing:antialiased; padding:0 0 48px;}
+  .num{font-family:var(--mono); font-variant-numeric:tabular-nums}
+  a{color:var(--steel); text-decoration:none} a:hover{text-decoration:underline}
+
+  header{display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:14px 22px; border-bottom:1px solid var(--line); background:linear-gradient(180deg,#121a24,#0e141c); position:sticky; top:0; z-index:10;}
+  .brand{font-weight:700; letter-spacing:.14em; font-size:14px} .brand b{color:var(--amber)}
+  .badge{font-family:var(--mono); font-size:11px; letter-spacing:.06em; color:var(--ink-dim); border:1px solid var(--line); border-radius:999px; padding:3px 10px; text-transform:uppercase;}
+  .badge.live{color:var(--bull); border-color:var(--bull-dim)}
+  .spacer{flex:1}
+  .updated{font-family:var(--mono); font-size:11px; color:var(--ink-faint)}
+  button{font-family:var(--disp); font-weight:600; font-size:13px; color:var(--ink); background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:7px 14px; cursor:pointer;}
+  button:hover{border-color:var(--steel)}
+  .toggle{display:flex; align-items:center; gap:7px; font-size:12px; color:var(--ink-dim)}
+
+  main{max-width:1320px; margin:0 auto; padding:22px}
+  .eyebrow{font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-faint); margin:0 0 10px;}
+  .panel{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:20px 22px}
+
+  /* charts */
+  .charts{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:20px}
+  .chartbox{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:8px; overflow:hidden}
+  .chartbox .cap{font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-dim); padding:6px 8px 8px}
+  .tvwrap{height:300px}
+
+  /* two-column body */
+  .grid{display:grid; grid-template-columns:1.5fr 1fr; gap:16px; align-items:start}
+
+  .hero{display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px}
+  .verdict-label{font-size:38px; font-weight:700; letter-spacing:-.01em; line-height:1.05; margin:2px 0 4px}
+  .verdict-sub{font-family:var(--mono); font-size:12px; color:var(--ink-dim)}
+  .scorebar{height:8px; border-radius:999px; background:var(--panel-2); margin-top:16px; overflow:hidden}
+  .scorebar>i{display:block; height:100%; border-radius:999px}
+  .idx-move{font-family:var(--mono); font-size:12px; color:var(--ink-dim); margin-top:14px}
+  .diverge .tag{display:inline-block; font-family:var(--mono); font-size:12px; letter-spacing:.08em; text-transform:uppercase; padding:4px 10px; border-radius:6px; margin-bottom:12px;}
+  .tag.aligned{color:var(--ink-dim); border:1px solid var(--line)}
+  .tag.warn{color:var(--amber); border:1px solid #4a3a17; background:#20190a}
+  .diverge p{margin:0; font-size:15px; line-height:1.5}
+  .diverge .mini{margin-top:14px; display:flex; gap:20px}
+  .mini b{display:block; font-family:var(--mono); font-size:19px}
+  .mini span{font-family:var(--mono); font-size:10px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:.08em}
+  @keyframes flashpanel{0%,100%{border-color:var(--line)}25%,75%{border-color:var(--amber); box-shadow:0 0 0 2px #f2b54455}}
+  .flash{animation:flashpanel 1s ease-in-out 3}
+
+  .ribbon{display:flex; height:32px; border-radius:8px; overflow:hidden; border:1px solid var(--line)}
+  .ribbon .adv{background:linear-gradient(90deg,var(--bull-dim),var(--bull)); display:flex; align-items:center; padding:0 12px}
+  .ribbon .dec{background:linear-gradient(90deg,var(--bear),var(--bear-dim)); display:flex; align-items:center; justify-content:flex-end; padding:0 12px; margin-left:auto}
+  .ribbon b{font-family:var(--mono); font-size:12px; color:#06110d}
+  .chips{display:flex; gap:10px; flex-wrap:wrap; margin-top:12px}
+  .chip{background:var(--panel-2); border:1px solid var(--line); border-radius:10px; padding:9px 13px; min-width:110px}
+  .chip span{font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint); display:block}
+  .chip b{font-family:var(--mono); font-size:18px; font-weight:600}
+
+  .tug{display:grid; grid-template-columns:1fr 1fr; gap:0 18px; margin-top:16px}
+  .tug h3{font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-faint); margin:0 0 10px}
+  .tug .col.right h3{text-align:right}
+  .row{display:flex; align-items:center; gap:10px; height:24px; margin-bottom:5px; font-family:var(--mono); font-size:12px}
+  .row .sym{width:52px} .row .val{width:52px; color:var(--ink-dim); text-align:right}
+  .row .bar{flex:1; height:13px; background:var(--panel-2); border-radius:4px; overflow:hidden; display:flex}
+  .row .bar i{display:block; height:100%}
+  .col.left .row .bar{justify-content:flex-end}
+  .col.left .sym{order:3; text-align:right} .col.left .val{order:1} .col.left .bar{order:2}
+  .bull-fill{background:var(--bull)} .bear-fill{background:var(--bear)}
+
+  /* news */
+  .news{position:sticky; top:78px}
+  .news .head{display:flex; align-items:center; gap:10px; margin-bottom:12px}
+  .news .head .eyebrow{margin:0}
+  .newslist{max-height:760px; overflow-y:auto; margin:0; padding:0; list-style:none}
+  .newslist li{padding:11px 0; border-bottom:1px solid var(--line)}
+  .newslist li:last-child{border-bottom:none}
+  .ni-top{display:flex; align-items:center; gap:8px; margin-bottom:3px}
+  .ni-src{font-family:var(--mono); font-size:10px; color:var(--steel); text-transform:uppercase; letter-spacing:.05em}
+  .ni-time{font-family:var(--mono); font-size:10px; color:var(--ink-faint); margin-left:auto}
+  .ni-dot{width:7px; height:7px; border-radius:50%; background:var(--amber); flex:none}
+  .ni-title{font-size:13.5px; line-height:1.4; color:var(--ink)}
+  .ni-title:hover{color:var(--steel)}
+  .newslist::-webkit-scrollbar{width:8px} .newslist::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px}
+
+  /* toast */
+  #toast{position:fixed; top:70px; left:50%; transform:translateX(-50%) translateY(-140%); background:#20190a; border:1px solid var(--amber); color:var(--amber); font-family:var(--mono); font-size:13px; padding:12px 20px; border-radius:10px; z-index:50; transition:transform .35s ease; box-shadow:0 8px 30px #0008}
+  #toast.show{transform:translateX(-50%) translateY(0)}
+
+  /* bias & AI */
+  .biasrow{display:grid; grid-template-columns:1.5fr 1fr; gap:16px; margin-bottom:20px}
+  .factors{margin-top:14px; display:flex; flex-direction:column; gap:7px}
+  .factor{display:flex; align-items:center; gap:10px; font-size:13px}
+  .factor .fdot{width:8px; height:8px; border-radius:50%; flex:none}
+  .factor .fname{width:148px; color:var(--ink); font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.04em}
+  .factor .fdetail{color:var(--ink-dim); font-family:var(--mono); font-size:12px}
+  .dot-bull{background:var(--bull)} .dot-bear{background:var(--bear)} .dot-neutral{background:var(--ink-faint)} .dot-caution{background:var(--amber)}
+  .ainote .aihead{display:flex; align-items:center; gap:10px}
+  .ainote .aibody{white-space:pre-wrap; font-size:13.5px; line-height:1.55; color:var(--ink); margin-top:12px}
+  .ainote .aihint{font-family:var(--mono); font-size:10.5px; color:var(--ink-faint); margin-top:10px; line-height:1.5}
+
+  /* constituent table */
+  .ctools{display:flex; align-items:center; gap:10px; margin-bottom:12px}
+  .ctools input{font-family:var(--mono); font-size:12px; background:var(--panel-2); color:var(--ink); border:1px solid var(--line); border-radius:8px; padding:7px 12px; width:160px}
+  .ctable{width:100%; border-collapse:collapse; font-family:var(--mono); font-size:12.5px}
+  .ctable th{text-align:right; padding:8px 12px; color:var(--ink-faint); font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; cursor:pointer; user-select:none; border-bottom:1px solid var(--line); white-space:nowrap}
+  .ctable th:first-child, .ctable td:first-child{text-align:left}
+  .ctable th:hover{color:var(--ink)}
+  .ctable th.act{color:var(--steel)}
+  .ctable td{padding:7px 12px; border-bottom:1px solid #1c2530; text-align:right}
+  .ctable tbody tr:hover{background:var(--panel-2)}
+  .ctable .sym{color:var(--ink); font-weight:600}
+  .up{color:var(--bull)} .down{color:var(--bear)}
+
+  footer{max-width:1320px; margin:22px auto 0; padding:0 22px; color:var(--ink-faint); font-size:12px; font-family:var(--mono); line-height:1.7}
+  .state{padding:60px 22px; text-align:center; color:var(--ink-dim); font-family:var(--mono)}
+  @media(max-width:1050px){.charts{grid-template-columns:1fr} .grid{grid-template-columns:1fr} .hero{grid-template-columns:1fr} .news{position:static} .biasrow{grid-template-columns:1fr}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">NDX <b>INTERNALS</b></div>
+  <div class="badge" id="provider">—</div>
+  <div class="badge" id="coverage">—</div>
+  <div class="spacer"></div>
+  <div class="updated" id="updated">—</div>
+  <label class="toggle"><input type="checkbox" id="sound"> sound</label>
+  <label class="toggle"><input type="checkbox" id="auto" checked> auto&nbsp;10s</label>
+  <button id="refresh">Refresh</button>
+</header>
+
+<div id="toast"></div>
+
+<main>
+  <!-- live charts -->
+  <p class="eyebrow">Live index charts</p>
+  <section class="charts" id="charts"></section>
+
+  <div class="state" id="state">Loading market internals…</div>
+  <div id="content" style="display:none">
+    <p class="eyebrow">US100 bias &amp; setup &mdash; <span style="color:var(--ink-faint)">decision-support, not a trade call</span></p>
+    <section class="biasrow">
+      <div class="panel">
+        <div class="verdict-sub" id="sigSub">Rules-based bias</div>
+        <div class="verdict-label" id="sigLabel">—</div>
+        <div class="scorebar"><i id="sigFill"></i></div>
+        <div class="factors" id="factors"></div>
+      </div>
+      <div class="panel ainote">
+        <div class="aihead">
+          <p class="eyebrow" style="margin:0">AI analyst note</p>
+          <div class="spacer"></div>
+          <button id="aiBtn">Get AI read</button>
+        </div>
+        <div class="aibody" id="aiBody">Click "Get AI read" for a plain-language synthesis of the factors on the left. It summarizes the current data — it does not predict prices or give advice.</div>
+        <div class="aihint" id="aiHint"></div>
+      </div>
+    </section>
+
+    <div class="grid">
+      <!-- left: internals -->
+      <div>
+        <p class="eyebrow">Breadth verdict &amp; divergence</p>
+        <section class="hero">
+          <div class="panel">
+            <div class="verdict-sub" id="biasScoreLabel">Breadth bias</div>
+            <div class="verdict-label" id="biasLabel">—</div>
+            <div class="scorebar"><i id="biasFill"></i></div>
+            <div class="idx-move" id="idxMove">—</div>
+          </div>
+          <div class="panel diverge" id="divPanel">
+            <span class="tag aligned" id="divTag">—</span>
+            <p id="divNote">—</p>
+            <div class="mini">
+              <div><b id="divIdx">—</b><span>index %</span></div>
+              <div><b id="divAdv">—</b><span>% advancing</span></div>
+              <div><b id="divMed">—</b><span>median %</span></div>
+            </div>
+          </div>
+        </section>
+
+        <p class="eyebrow">Participation &mdash; advancers vs decliners</p>
+        <section class="panel">
+          <div class="ribbon"><div class="adv" id="ribAdv"><b id="ribAdvT">—</b></div><div class="dec" id="ribDec"><b id="ribDecT">—</b></div></div>
+          <div class="chips" id="chips"></div>
+          <div class="tug">
+            <div class="col left"><h3>Dragging down</h3><div id="laggards"></div></div>
+            <div class="col right"><h3>Pulling up</h3><div id="leaders"></div></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- right: news -->
+      <div>
+        <section class="panel news">
+          <div class="head">
+            <p class="eyebrow">Market news</p>
+            <div class="spacer"></div>
+            <label class="toggle"><input type="checkbox" id="hiOnly"> high-impact</label>
+          </div>
+          <ul class="newslist" id="newslist"><li>Loading headlines…</li></ul>
+        </section>
+      </div>
+    </div>
+
+    <p class="eyebrow" id="constHead">All constituents</p>
+    <section class="panel">
+      <div class="ctools">
+        <input id="constSearch" placeholder="filter ticker…" autocomplete="off">
+        <span style="font-family:var(--mono); font-size:11px; color:var(--ink-faint)" id="constCount"></span>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="ctable" id="ctable">
+          <thead><tr>
+            <th data-k="symbol">Symbol</th>
+            <th data-k="change_pct" class="act">Change %</th>
+            <th data-k="weight_pct">Weight %</th>
+            <th data-k="contribution">Contribution</th>
+          </tr></thead>
+          <tbody id="cbody"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+</main>
+
+<footer id="foot"></footer>
+
+<!-- TradingView widget library -->
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+
+// ---- live charts (edit symbols here if your feed differs) ----
+const CHARTS = [
+  {id:'tv_us100', symbol:'OANDA:NAS100USD', title:'US100 · Nasdaq'},
+  {id:'tv_sp500', symbol:'OANDA:SPX500USD', title:'SP500'},
+  {id:'tv_us30',  symbol:'OANDA:US30USD',   title:'US30 · Dow'},
+];
+function buildCharts(){
+  $('charts').innerHTML = CHARTS.map(c=>`<div class="chartbox"><div class="cap">${c.title}</div><div class="tvwrap" id="${c.id}"></div></div>`).join('');
+  if(!window.TradingView) return;
+  CHARTS.forEach(c=> new TradingView.widget({
+    container_id:c.id, symbol:c.symbol, interval:'5', timezone:'Etc/UTC',
+    theme:'dark', style:'1', locale:'en', autosize:true,
+    toolbar_bg:'#151d28', hide_top_toolbar:false, hide_legend:false, save_image:false,
+    backgroundColor:'#151d28', gridColor:'#26313f'
+  }));
+}
+
+// ---- helpers ----
+function fmtPct(v){ if(v==null) return '—'; return (v>=0?'+':'')+v.toFixed(2)+'%'; }
+function biasColor(s){ if(s>=57) return 'var(--bull)'; if(s<=43) return 'var(--bear)'; return 'var(--steel)'; }
+function ago(ts){ const s=Math.max(0,Math.round(Date.now()/1000-ts)); return s<60?`${s}s ago`:s<3600?`${Math.round(s/60)}m ago`:`${Math.round(s/3600)}h ago`; }
+
+let prevDiv = null;
+function beep(){ try{ const a=new (window.AudioContext||window.webkitAudioContext)(); const o=a.createOscillator(),g=a.createGain(); o.connect(g); g.connect(a.destination); o.frequency.value=660; g.gain.value=0.05; o.start(); setTimeout(()=>{o.stop();a.close();},250);}catch(e){} }
+function toast(msg){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),5000); }
+function alertFlip(state){
+  toast('⚠ Divergence flip → '+state.replace(/_/g,' '));
+  const p=$('divPanel'); p.classList.remove('flash'); void p.offsetWidth; p.classList.add('flash');
+  if($('sound').checked) beep();
+}
+
+// ---- dashboard ----
+async function load(refresh=false){
+  try{
+    const r = await fetch('/api/dashboard'+(refresh?'?refresh=true':''));
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    render(await r.json());
+  }catch(e){
+    $('state').style.display='block'; $('content').style.display='none';
+    $('state').textContent='Data feed unavailable — '+e.message+'. Is the backend running?';
+  }
+}
+function render(d){
+  $('state').style.display='none'; $('content').style.display='block';
+  const m=d.meta||{};
+  $('provider').textContent='feed: '+(m.provider||'?');
+  $('provider').className='badge'+(m.provider&&m.provider!=='mock'?' live':'');
+  $('coverage').textContent=(m.constituents_returned||0)+'/'+(m.constituents_requested||0)+' names';
+  $('updated').textContent=m.timestamp?'updated '+ago(m.timestamp):'';
+
+  const b=d.bias||{};
+  const sig=d.signal;
+  if(sig){
+    $('sigLabel').textContent=sig.bias||'—';
+    $('sigLabel').style.color=sig.score==null?'var(--ink)':biasColor(sig.score);
+    $('sigSub').textContent=(sig.score==null?'Rules-based bias':'Rules-based bias · '+sig.score+'/100')+(sig.caution?' · ⚠ divergence':'');
+    $('sigFill').style.width=(sig.score||0)+'%';
+    $('sigFill').style.background=sig.score==null?'var(--line)':biasColor(sig.score);
+    $('factors').innerHTML=(sig.factors||[]).map(f=>`<div class="factor"><span class="fdot dot-${f.signal}"></span><span class="fname">${f.name}</span><span class="fdetail">${f.detail}</span></div>`).join('');
+  }
+  $('biasLabel').textContent=b.label||'—';
+  $('biasLabel').style.color=b.score==null?'var(--ink)':biasColor(b.score);
+  $('biasScoreLabel').textContent=b.score==null?'Breadth bias':('Breadth bias · '+b.score+'/100');
+  $('biasFill').style.width=(b.score||0)+'%';
+  $('biasFill').style.background=b.score==null?'var(--line)':biasColor(b.score);
+  const idx=d.index;
+  $('idxMove').textContent=idx?`${idx.symbol} ${fmtPct(idx.change_pct)} · est. internals ${fmtPct(d.contribution?.estimated_index_change_pct)}`:`est. internals ${fmtPct(d.contribution?.estimated_index_change_pct)}`;
+
+  const dv=d.divergence||{};
+  const warn=dv.state&&dv.state.endsWith('divergence');
+  const tag=$('divTag'); tag.textContent=(dv.state||'—').replace(/_/g,' '); tag.className='tag '+(warn?'warn':'aligned');
+  $('divNote').textContent=dv.note||'—';
+  $('divIdx').textContent=fmtPct(dv.index_change_pct);
+  $('divAdv').textContent=dv.pct_advancing!=null?dv.pct_advancing+'%':'—';
+  $('divMed').textContent=fmtPct(dv.median_change_pct);
+  if(prevDiv!==null && dv.state!==prevDiv && warn) alertFlip(dv.state);
+  prevDiv=dv.state;
+
+  const br=d.breadth||{};
+  const adv=br.advancers||0, dec=br.decliners||0, tot=Math.max(adv+dec,1);
+  $('ribAdv').style.width=(adv/tot*100)+'%'; $('ribDec').style.width=(dec/tot*100)+'%';
+  $('ribAdvT').textContent=adv+' up'; $('ribDecT').textContent=dec+' down';
+  $('chips').innerHTML=[['% advancing',br.pct_advancing!=null?br.pct_advancing+'%':'—'],['% above MA20',br.pct_above_ma20!=null?br.pct_above_ma20+'%':'—'],['up-volume',br.up_volume_pct!=null?br.up_volume_pct+'%':'—'],['A/D ratio',br.adv_decl_ratio!=null?br.adv_decl_ratio:'—'],['median',fmtPct(br.median_change_pct)]].map(c=>`<div class="chip"><span>${c[0]}</span><b>${c[1]}</b></div>`).join('');
+
+  const c=d.contribution||{}; const all=[...(c.leaders||[]),...(c.laggards||[])];
+  window._const = c.all || [];
+  renderConst();
+  const max=Math.max(1e-4,...all.map(x=>Math.abs(x.contribution)));
+  $('leaders').innerHTML=(c.leaders||[]).map(x=>`<div class="row"><span class="sym">${x.symbol}</span><span class="bar"><i class="bull-fill" style="width:${Math.abs(x.contribution)/max*100}%"></i></span><span class="val">${fmtPct(x.change_pct)}</span></div>`).join('')||'<div class="row">—</div>';
+  $('laggards').innerHTML=(c.laggards||[]).map(x=>`<div class="row"><span class="val">${fmtPct(x.change_pct)}</span><span class="bar"><i class="bear-fill" style="width:${Math.abs(x.contribution)/max*100}%"></i></span><span class="sym">${x.symbol}</span></div>`).join('')||'<div class="row">—</div>';
+
+  $('foot').innerHTML=`Index proxy: ${m.index_proxy||'—'} · data cache ${m.cache_ttl||0}s · charts are TradingView's feed (delayed on free tiers). Weights are an approximate snapshot.<br>Analytical context only — not a trade signal and not financial advice.`;
+}
+
+// ---- news ----
+async function loadNews(){
+  try{
+    const hi=$('hiOnly').checked?'?high_impact=true':'';
+    const r=await fetch('/api/news'+hi); const d=await r.json();
+    const items=d.items||[];
+    if(!items.length){ $('newslist').innerHTML='<li>No headlines'+(d.error?' (feeds unreachable)':'')+'.</li>'; return; }
+    $('newslist').innerHTML=items.map(n=>`<li><div class="ni-top">${n.impact?'<span class="ni-dot"></span>':''}<span class="ni-src">${n.source}</span><span class="ni-time">${ago(n.published)}</span></div><a class="ni-title" href="${n.link}" target="_blank" rel="noopener">${n.title}</a></li>`).join('');
+  }catch(e){ $('newslist').innerHTML='<li>News unavailable — '+e.message+'</li>'; }
+}
+
+// ---- AI analyst note (on-demand; costs an API call, so not auto) ----
+async function loadAiNote(){
+  $('aiBody').textContent='Thinking…'; $('aiHint').textContent='';
+  try{
+    const r=await fetch('/api/ai_note'); const d=await r.json();
+    if(d.ok){ $('aiBody').textContent=d.text; $('aiHint').textContent='Model: '+d.model+' · a synthesis of the current data, not a forecast and not advice.'; }
+    else{ $('aiBody').textContent=d.error||'AI note unavailable.'; }
+  }catch(e){ $('aiBody').textContent='AI note error — '+e.message; }
+}
+$('aiBtn').onclick=loadAiNote;
+
+// ---- full constituent table (sortable + filter) ----
+let cSortKey='change_pct', cSortDir=-1;
+function renderConst(){
+  const rows=(window._const||[]).slice();
+  const q=($('constSearch').value||'').trim().toUpperCase();
+  const filtered=q?rows.filter(r=>r.symbol.includes(q)):rows;
+  filtered.sort((a,b)=>{ const x=a[cSortKey],y=b[cSortKey];
+    if(typeof x==='string') return cSortDir*x.localeCompare(y);
+    return cSortDir*((x>y?1:x<y?-1:0)); });
+  $('cbody').innerHTML=filtered.map(r=>{
+    const cls=r.change_pct>=0?'up':'down';
+    const cc =r.contribution>=0?'up':'down';
+    return `<tr><td class="sym">${r.symbol}</td><td class="${cls}">${(r.change_pct>=0?'+':'')+r.change_pct.toFixed(2)}%</td><td>${r.weight_pct.toFixed(2)}%</td><td class="${cc}">${(r.contribution>=0?'+':'')+r.contribution.toFixed(3)}</td></tr>`;
+  }).join('')||'<tr><td>—</td></tr>';
+  $('constHead').textContent='All constituents ('+rows.length+')';
+  $('constCount').textContent=filtered.length+' shown';
+  document.querySelectorAll('#ctable th').forEach(th=>th.classList.toggle('act', th.dataset.k===cSortKey));
+}
+document.querySelectorAll('#ctable th').forEach(th=>th.onclick=()=>{
+  const k=th.dataset.k;
+  if(k===cSortKey) cSortDir*=-1; else { cSortKey=k; cSortDir=(k==='symbol')?1:-1; }
+  renderConst();
+});
+$('constSearch').oninput=renderConst;
+
+// ---- scheduling ----
+let timer=null;
+function schedule(){ if(timer) clearInterval(timer); if($('auto').checked) timer=setInterval(()=>load(false),10000); }
+$('refresh').onclick=()=>{load(true); loadNews();};
+$('auto').onchange=schedule;
+$('hiOnly').onchange=loadNews;
+
+buildCharts();
+load(false); loadNews(); schedule();
+setInterval(loadNews, 120000); // news every 2 min
+</script>
+</body>
+</html>
