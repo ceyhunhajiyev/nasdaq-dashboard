@@ -88,18 +88,39 @@
 
 <footer id="foot"></footer>
 
-<script src="https://s3.tradingview.com/tv.js"></script>
+<script src="/static/vendor/lightweight-charts.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 const CHARTS=[
-  {id:'tv_xau', symbol:'OANDA:XAUUSD', title:'XAU · Gold'},
-  {id:'tv_xag', symbol:'OANDA:XAGUSD', title:'XAG · Silver'},
-  {id:'tv_xcu', symbol:'OANDA:XCUUSD', title:'XCU · Copper'},
+  {id:'lc_xau', inst:'XAU', title:'XAU · Gold'},
+  {id:'lc_xag', inst:'XAG', title:'XAG · Silver'},
+  {id:'lc_xcu', inst:'XCU', title:'XCU · Copper'},
 ];
+const chartSeries={};
 function buildCharts(){
   $('charts').innerHTML=CHARTS.map(c=>`<div class="chartbox"><div class="cap">${c.title}</div><div class="tvwrap" id="${c.id}"></div></div>`).join('');
-  if(!window.TradingView) return;
-  CHARTS.forEach(c=>new TradingView.widget({container_id:c.id,symbol:c.symbol,interval:'60',timezone:'Etc/UTC',theme:'dark',style:'1',locale:'en',autosize:true,toolbar_bg:'#151d28',hide_legend:false,save_image:false,backgroundColor:'#151d28',gridColor:'#26313f'}));
+  if(!window.LightweightCharts) return;
+  CHARTS.forEach(c=>{
+    const el=$(c.id);
+    const chart=LightweightCharts.createChart(el,{width:el.clientWidth,height:300,
+      layout:{background:{color:'#151d28'},textColor:'#8b97a6'},
+      grid:{vertLines:{color:'#1c2530'},horzLines:{color:'#1c2530'}},
+      rightPriceScale:{borderColor:'#26313f'},timeScale:{borderColor:'#26313f',timeVisible:true,secondsVisible:false},
+      crosshair:{mode:0}});
+    const s=chart.addCandlestickSeries({upColor:'#3fb98f',downColor:'#e5654b',borderVisible:false,wickUpColor:'#3fb98f',wickDownColor:'#e5654b'});
+    chartSeries[c.inst]={chart,s};
+    window.addEventListener('resize',()=>chart.applyOptions({width:el.clientWidth}));
+  });
+  updateCharts();
+}
+async function updateCharts(){
+  for(const c of CHARTS){
+    try{
+      const r=await fetch('/api/signals?instrument='+c.inst); const d=await r.json();
+      const cs=chartSeries[c.inst]; if(!cs) continue;
+      if(d.ohlc&&d.ohlc.length){ cs.s.setData(d.ohlc); cs.chart.timeScale().fitContent(); }
+    }catch(e){}
+  }
 }
 function fmtPct(v){ if(v==null) return '—'; return (v>=0?'+':'')+v.toFixed(2)+'%'; }
 function biasColor(s){ if(s==null) return 'var(--line)'; if(s>=60) return 'var(--bull)'; if(s<=40) return 'var(--bear)'; return 'var(--steel)'; }
@@ -136,7 +157,7 @@ function render(d){
 
   $('foot').innerHTML='Data: Yahoo futures (GC/SI/HG) — directional proxy for spot XAU/XAG/XCU. SMT is a transparent divergence check. Charts are TradingView\'s feed.<br>Analytical context only — not a trade signal and not financial advice.';
 }
-$('refresh').onclick=()=>load(true);
+$('refresh').onclick=()=>{load(true); updateCharts();};
 buildCharts(); load(false);
 setInterval(()=>load(false), 60000);
 </script>

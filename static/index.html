@@ -241,26 +241,42 @@
 
 <footer id="foot"></footer>
 
-<!-- TradingView widget library -->
-<script src="https://s3.tradingview.com/tv.js"></script>
+<!-- self-hosted Lightweight Charts (no external CDN) -->
+<script src="/static/vendor/lightweight-charts.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 
-// ---- live charts (edit symbols here if your feed differs) ----
-const CHARTS = [
-  {id:'tv_us100', symbol:'OANDA:NAS100USD', title:'US100 · Nasdaq'},
-  {id:'tv_sp500', symbol:'OANDA:SPX500USD', title:'SP500'},
-  {id:'tv_us30',  symbol:'OANDA:US30USD',   title:'US30 · Dow'},
+// ---- live index charts (Lightweight Charts, self-hosted, backend-fed) ----
+const CHARTS=[
+  {id:'lc_us100', inst:'US100', title:'US100 · Nasdaq'},
+  {id:'lc_sp500', inst:'SP500', title:'SP500'},
+  {id:'lc_us30',  inst:'US30',  title:'US30 · Dow'},
 ];
+const chartSeries={};
 function buildCharts(){
-  $('charts').innerHTML = CHARTS.map(c=>`<div class="chartbox"><div class="cap">${c.title}</div><div class="tvwrap" id="${c.id}"></div></div>`).join('');
-  if(!window.TradingView) return;
-  CHARTS.forEach(c=> new TradingView.widget({
-    container_id:c.id, symbol:c.symbol, interval:'5', timezone:'Etc/UTC',
-    theme:'dark', style:'1', locale:'en', autosize:true,
-    toolbar_bg:'#151d28', hide_top_toolbar:false, hide_legend:false, save_image:false,
-    backgroundColor:'#151d28', gridColor:'#26313f'
-  }));
+  $('charts').innerHTML=CHARTS.map(c=>`<div class="chartbox"><div class="cap">${c.title}</div><div class="tvwrap" id="${c.id}"></div></div>`).join('');
+  if(!window.LightweightCharts) return;
+  CHARTS.forEach(c=>{
+    const el=$(c.id);
+    const chart=LightweightCharts.createChart(el,{width:el.clientWidth,height:300,
+      layout:{background:{color:'#151d28'},textColor:'#8b97a6'},
+      grid:{vertLines:{color:'#1c2530'},horzLines:{color:'#1c2530'}},
+      rightPriceScale:{borderColor:'#26313f'},timeScale:{borderColor:'#26313f',timeVisible:true,secondsVisible:false},
+      crosshair:{mode:0}});
+    const s=chart.addCandlestickSeries({upColor:'#3fb98f',downColor:'#e5654b',borderVisible:false,wickUpColor:'#3fb98f',wickDownColor:'#e5654b'});
+    chartSeries[c.inst]={chart,s};
+    window.addEventListener('resize',()=>chart.applyOptions({width:el.clientWidth}));
+  });
+  updateCharts();
+}
+async function updateCharts(){
+  for(const c of CHARTS){
+    try{
+      const r=await fetch('/api/signals?instrument='+c.inst); const d=await r.json();
+      const cs=chartSeries[c.inst]; if(!cs) continue;
+      if(d.ohlc&&d.ohlc.length){ cs.s.setData(d.ohlc); cs.chart.timeScale().fitContent(); }
+    }catch(e){}
+  }
 }
 
 // ---- helpers ----
@@ -390,7 +406,7 @@ $('constSearch').oninput=renderConst;
 // ---- scheduling ----
 let timer=null;
 function schedule(){ if(timer) clearInterval(timer); if($('auto').checked) timer=setInterval(()=>load(false),10000); }
-$('refresh').onclick=()=>{load(true); loadNews();};
+$('refresh').onclick=()=>{load(true); loadNews(); updateCharts();};
 $('auto').onchange=schedule;
 $('hiOnly').onchange=loadNews;
 
