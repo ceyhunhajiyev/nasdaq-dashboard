@@ -73,7 +73,7 @@
 </header>
 
 <main>
-  <p class="eyebrow">Live charts — XAU · XAG · XCU</p>
+  <p class="eyebrow" style="display:flex;align-items:center;gap:10px">Live charts &mdash; XAU · XAG · XCU &mdash; synced <span class="tfbtns" id="metTf" style="margin-left:auto"></span></p>
   <section class="charts" id="charts"></section>
 
   <div class="state" id="state">Loading metals…</div>
@@ -100,9 +100,19 @@ const CHARTS=[
   {id:'lc_xcu', inst:'XCU', title:'XCU · Copper'},
 ];
 const TFS=['1m','5m','15m','1h','4h','1d'];
-const chartState={};
+let metTf='1h';
+const metCharts=[];
+let msyncing=false;
+function buildTfBar(){
+  $('metTf').innerHTML=TFS.map(t=>`<button class="tfbtn${t===metTf?' act':''}" data-tf="${t}">${t.toUpperCase()}</button>`).join('');
+  $('metTf').querySelectorAll('.tfbtn').forEach(b=>b.onclick=()=>{
+    metTf=b.dataset.tf;
+    $('metTf').querySelectorAll('.tfbtn').forEach(x=>x.classList.remove('act')); b.classList.add('act');
+    updateCharts();
+  });
+}
 function buildCharts(){
-  $('charts').innerHTML=CHARTS.map(c=>`<div class="chartbox"><div class="cap">${c.title}<span class="tfbtns" data-inst="${c.inst}">${TFS.map(t=>`<button class="tfbtn" data-tf="${t}">${t.toUpperCase()}</button>`).join('')}</span></div><div class="tvwrap" id="${c.id}"></div></div>`).join('');
+  $('charts').innerHTML=CHARTS.map(c=>`<div class="chartbox"><div class="cap">${c.title}</div><div class="tvwrap" id="${c.id}"></div></div>`).join('');
   if(!window.LightweightCharts) return;
   CHARTS.forEach(c=>{
     const el=$(c.id);
@@ -112,26 +122,38 @@ function buildCharts(){
       rightPriceScale:{borderColor:'#26313f'},timeScale:{borderColor:'#26313f',timeVisible:true,secondsVisible:false},
       crosshair:{mode:0}});
     const s=chart.addCandlestickSeries({upColor:'#3fb98f',downColor:'#e5654b',borderVisible:false,wickUpColor:'#3fb98f',wickDownColor:'#e5654b'});
-    chartState[c.inst]={chart,s,tf:'1h'};
+    metCharts.push({chart,s,inst:c.inst,el,dataMap:new Map()});
     window.addEventListener('resize',()=>chart.applyOptions({width:el.clientWidth}));
   });
-  document.querySelectorAll('.tfbtns').forEach(grp=>{
-    const inst=grp.dataset.inst;
-    grp.querySelectorAll('.tfbtn').forEach(b=>{
-      if(b.dataset.tf===chartState[inst].tf) b.classList.add('act');
-      b.onclick=()=>{ chartState[inst].tf=b.dataset.tf; grp.querySelectorAll('.tfbtn').forEach(x=>x.classList.remove('act')); b.classList.add('act'); loadChart(inst); };
+  metCharts.forEach(src=>{
+    src.chart.timeScale().subscribeVisibleLogicalRangeChange(range=>{
+      if(msyncing||!range) return;
+      msyncing=true;
+      metCharts.forEach(dst=>{ if(dst!==src) dst.chart.timeScale().setVisibleLogicalRange(range); });
+      msyncing=false;
+    });
+    src.chart.subscribeCrosshairMove(param=>{
+      if(msyncing) return;
+      msyncing=true;
+      metCharts.forEach(dst=>{
+        if(dst===src) return;
+        if(param.time && dst.dataMap.has(param.time)) dst.chart.setCrosshairPosition(dst.dataMap.get(param.time), param.time, dst.s);
+        else dst.chart.clearCrosshairPosition();
+      });
+      msyncing=false;
     });
   });
   updateCharts();
 }
-async function loadChart(inst){
-  const st=chartState[inst]; if(!st) return;
-  try{
-    const r=await fetch(`/api/signals?instrument=${inst}&tf=${st.tf}`); const d=await r.json();
-    if(d.ohlc&&d.ohlc.length){ st.s.setData(d.ohlc); st.chart.timeScale().fitContent(); }
-  }catch(e){}
+async function updateCharts(){
+  for(const c of metCharts){
+    try{
+      const r=await fetch(`/api/signals?instrument=${c.inst}&tf=${metTf}`); const d=await r.json();
+      if(d.ohlc&&d.ohlc.length){ c.s.setData(d.ohlc); c.dataMap=new Map(d.ohlc.map(b=>[b.time,b.close])); }
+    }catch(e){}
+  }
+  if(metCharts[0]) metCharts[0].chart.timeScale().fitContent();
 }
-function updateCharts(){ CHARTS.forEach(c=>loadChart(c.inst)); }
 function fmtPct(v){ if(v==null) return '—'; return (v>=0?'+':'')+v.toFixed(2)+'%'; }
 function biasColor(s){ if(s==null) return 'var(--line)'; if(s>=60) return 'var(--bull)'; if(s<=40) return 'var(--bear)'; return 'var(--steel)'; }
 function ago(ts){ const s=Math.max(0,Math.round(Date.now()/1000-ts)); return s<60?`${s}s ago`:`${Math.round(s/60)}m ago`; }
@@ -168,7 +190,7 @@ function render(d){
   $('foot').innerHTML='Data: Yahoo futures (GC/SI/HG) — directional proxy for spot XAU/XAG/XCU. SMT is a transparent divergence check. Charts are TradingView\'s feed.<br>Analytical context only — not a trade signal and not financial advice.';
 }
 $('refresh').onclick=()=>{load(true); updateCharts();};
-buildCharts(); load(false);
+buildTfBar(); buildCharts(); load(false);
 setInterval(()=>load(false), 60000);
 setInterval(updateCharts, 30000); // charts every 30s (for 1m/5m liveness)
 </script>

@@ -50,6 +50,8 @@ class NewsItem:
     link: str
     published: float  # epoch seconds
     impact: bool
+    relevant: bool = False
+    lean: str = "neutral"   # bullish / bearish / neutral — COARSE context only
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -62,9 +64,38 @@ _IMPACT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Headlines relevant to US indices & metals.
+RELEVANCE_KEYWORDS = [
+    "fed", "fomc", "powell", "rate", "rates", "inflation", "cpi", "ppi", "pce",
+    "jobs", "payroll", "payrolls", "nfp", "unemployment", "gdp", "recession",
+    "treasury", "yield", "yields", "dollar", "tariff", "opec", "oil",
+    "nasdaq", "s&p", "dow", "index", "futures", "stocks", "equities",
+    "gold", "silver", "copper", "metals", "bullion",
+    "nvidia", "apple", "microsoft", "tesla", "amazon", "meta", "alphabet", "broadcom",
+]
+_RELEVANCE_RE = re.compile(r"\b(" + "|".join(re.escape(k) for k in RELEVANCE_KEYWORDS) + r")\b", re.IGNORECASE)
+
+# Coarse directional cues — deliberately simple; context only, NOT a signal.
+_BULL = re.compile(r"\b(rally|rallies|surge|surges|jump|jumps|gain|gains|rebound|"
+                   r"beat|beats|soar|soars|rise|rises|higher|record high|rate cut|cuts rates|dovish|"
+                   r"strong|upgrade|upgraded|optimism)\b", re.IGNORECASE)
+_BEAR = re.compile(r"\b(fall|falls|drop|drops|plunge|plunges|slump|slumps|sink|sinks|"
+                   r"selloff|sell-off|tumble|tumbles|miss|misses|lower|crash|crashes|"
+                   r"rate hike|hikes rates|hawkish|weak|downgrade|downgraded|fears|warning|recession)\b", re.IGNORECASE)
+
 
 def _is_impact(title: str) -> bool:
     return bool(_IMPACT_RE.search(title))
+
+
+def _is_relevant(title: str) -> bool:
+    return bool(_RELEVANCE_RE.search(title))
+
+
+def _lean(title: str) -> str:
+    b = bool(_BULL.search(title))
+    s = bool(_BEAR.search(title))
+    return "bullish" if b and not s else "bearish" if s and not b else "neutral"
 
 
 def parse_feed(source: str, raw_text: str) -> List[NewsItem]:
@@ -89,7 +120,8 @@ def parse_feed(source: str, raw_text: str) -> List[NewsItem]:
         if pub is None:
             pub = time.time()
         out.append(NewsItem(title=title, source=source, link=link,
-                            published=pub, impact=_is_impact(title)))
+                            published=pub, impact=_is_impact(title),
+                            relevant=_is_relevant(title), lean=_lean(title)))
     return out
 
 

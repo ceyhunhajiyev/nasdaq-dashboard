@@ -17,6 +17,7 @@ from .news import NewsAggregator
 from . import analysis
 from . import metals as metals_mod
 from . import signals as signals_mod
+from . import econcal
 
 app = FastAPI(title="Nasdaq-100 Internals Dashboard")
 
@@ -119,7 +120,7 @@ _news_cache = {"ts": 0.0, "data": None}
 
 
 @app.get("/api/news")
-def news(refresh: bool = False, high_impact: bool = False):
+def news(refresh: bool = False, high_impact: bool = False, relevant_only: bool = False):
     now = time.time()
     if refresh or not _news_cache["data"] or now - _news_cache["ts"] > settings.NEWS_TTL:
         try:
@@ -132,7 +133,14 @@ def news(refresh: bool = False, high_impact: bool = False):
     data = _news_cache["data"] or []
     if high_impact:
         data = [d for d in data if d.get("impact")]
-    return {"items": data, "count": len(data),
+    if relevant_only:
+        data = [d for d in data if d.get("relevant")]
+    # coarse lean tally across the relevant set — CONTEXT ONLY, not folded into bias
+    rel = [d for d in data if d.get("relevant")]
+    lean = {"bullish": sum(1 for d in rel if d.get("lean") == "bullish"),
+            "bearish": sum(1 for d in rel if d.get("lean") == "bearish"),
+            "neutral": sum(1 for d in rel if d.get("lean") == "neutral")}
+    return {"items": data, "count": len(data), "lean": lean,
             "sources": list(_news_agg.feeds.keys()),
             "timestamp": _news_cache["ts"]}
 
@@ -183,6 +191,21 @@ def api_signals(instrument: str = "US100", tf: str = "1h", refresh: bool = False
 @app.get("/signals")
 def signals_page():
     return FileResponse(_STATIC / "signals.html")
+
+
+# --- economic calendar (ForexFactory-style) ---------------------------------
+_cal_cache = {"ts": 0.0, "data": None}
+
+
+@app.get("/api/calendar")
+def api_calendar(min_impact: str = "Medium", refresh: bool = False):
+    now = time.time()
+    if refresh or not _cal_cache["data"] or now - _cal_cache["ts"] > 300:
+        _cal_cache["data"] = econcal.build_calendar(min_impact=min_impact)
+        _cal_cache["ts"] = now
+    out = dict(_cal_cache["data"])
+    out["timestamp"] = _cal_cache["ts"]
+    return out
 
 
 # --- frontend ---------------------------------------------------------------

@@ -85,6 +85,23 @@
 
   /* news */
   .news{position:sticky; top:78px}
+  .newslean{display:flex; gap:6px; margin-bottom:10px; font-family:var(--mono); font-size:10px}
+  .newslean span{padding:2px 7px; border-radius:5px; border:1px solid var(--line)}
+  .nl-bull{color:var(--bull)} .nl-bear{color:var(--bear)} .nl-neu{color:var(--ink-faint)}
+  .ni-lean{font-family:var(--mono); font-size:9px; padding:1px 5px; border-radius:4px; margin-left:6px; text-transform:uppercase}
+  .lean-bullish{color:var(--bull); border:1px solid var(--bull-dim)} .lean-bearish{color:var(--bear); border:1px solid #5a2a20} .lean-neutral{display:none}
+  /* economic calendar */
+  .callist{max-height:300px; overflow-y:auto; margin:0; padding:0; list-style:none}
+  .callist li{display:flex; align-items:center; gap:9px; padding:8px 0; border-bottom:1px solid var(--line); font-size:12.5px}
+  .callist li:last-child{border-bottom:none}
+  .cal-imp{width:7px; height:7px; border-radius:50%; flex:none}
+  .imp-red{background:var(--bear)} .imp-orange{background:var(--amber)} .imp-yellow{background:#c9b458} .imp-grey{background:var(--ink-faint)}
+  .cal-ccy{font-family:var(--mono); font-size:10px; color:var(--ink-dim); width:34px}
+  .cal-time{font-family:var(--mono); font-size:10px; color:var(--ink-faint); width:74px}
+  .cal-title{flex:1; color:var(--ink)}
+  .cal-vals{font-family:var(--mono); font-size:10.5px; color:var(--ink-dim); text-align:right; white-space:nowrap}
+  .cal-beat{color:var(--bull)} .cal-miss{color:var(--bear)} .cal-inline{color:var(--ink-dim)}
+  .callist::-webkit-scrollbar{width:8px} .callist::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px}
   .news .head{display:flex; align-items:center; gap:10px; margin-bottom:12px}
   .news .head .eyebrow{margin:0}
   .newslist{max-height:760px; overflow-y:auto; margin:0; padding:0; list-style:none}
@@ -208,14 +225,24 @@
         </section>
       </div>
 
-      <!-- right: news -->
+      <!-- right: economic calendar + news -->
       <div>
+        <section class="panel cal" style="margin-bottom:16px">
+          <div class="head">
+            <p class="eyebrow">Economic calendar</p>
+            <div class="spacer"></div>
+            <label class="toggle"><input type="checkbox" id="calHigh" checked> high-impact only</label>
+          </div>
+          <ul class="callist" id="callist"><li>Loading events…</li></ul>
+        </section>
         <section class="panel news">
           <div class="head">
             <p class="eyebrow">Market news</p>
             <div class="spacer"></div>
+            <label class="toggle"><input type="checkbox" id="relOnly" checked> indices/metals</label>
             <label class="toggle"><input type="checkbox" id="hiOnly"> high-impact</label>
           </div>
+          <div id="newslean" class="newslean"></div>
           <ul class="newslist" id="newslist"><li>Loading headlines…</li></ul>
         </section>
       </div>
@@ -401,13 +428,34 @@ function render(d){
 
 // ---- news ----
 async function loadNews(){
+  const params=[];
+  if($('hiOnly').checked) params.push('high_impact=true');
+  if($('relOnly').checked) params.push('relevant_only=true');
   try{
-    const hi=$('hiOnly').checked?'?high_impact=true':'';
-    const r=await fetch('/api/news'+hi); const d=await r.json();
-    const items=d.items||[];
+    const r=await fetch('/api/news'+(params.length?'?'+params.join('&'):'')); const d=await r.json();
+    const items=d.items||[]; const L=d.lean||{bullish:0,bearish:0,neutral:0};
+    $('newslean').innerHTML=`<span class="nl-bull">▲ ${L.bullish} bullish</span><span class="nl-bear">▼ ${L.bearish} bearish</span><span class="nl-neu">${L.neutral} neutral</span>`;
     if(!items.length){ $('newslist').innerHTML='<li>No headlines'+(d.error?' (feeds unreachable)':'')+'.</li>'; return; }
-    $('newslist').innerHTML=items.map(n=>`<li><div class="ni-top">${n.impact?'<span class="ni-dot"></span>':''}<span class="ni-src">${n.source}</span><span class="ni-time">${ago(n.published)}</span></div><a class="ni-title" href="${n.link}" target="_blank" rel="noopener">${n.title}</a></li>`).join('');
+    $('newslist').innerHTML=items.map(n=>`<li><div class="ni-top">${n.impact?'<span class="ni-dot"></span>':''}<span class="ni-src">${n.source}</span><span class="ni-time">${ago(n.published)}</span><span class="ni-lean lean-${n.lean}">${n.lean}</span></div><a class="ni-title" href="${n.link}" target="_blank" rel="noopener">${n.title}</a></li>`).join('');
   }catch(e){ $('newslist').innerHTML='<li>News unavailable — '+e.message+'</li>'; }
+}
+
+// ---- economic calendar (ForexFactory-style) ----
+function calTime(iso){ try{ const dt=new Date(iso); return dt.toLocaleDateString([],{weekday:'short'})+' '+dt.toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } }
+async function loadCalendar(){
+  const min=$('calHigh').checked?'High':'Low';
+  try{
+    const r=await fetch('/api/calendar?min_impact='+min); const d=await r.json();
+    const ev=d.events||[];
+    if(!ev.length){ $('callist').innerHTML='<li>'+(d.error?'Calendar feed unreachable':'No events for this filter')+'.</li>'; return; }
+    $('callist').innerHTML=ev.slice(0,40).map(e=>{
+      const vals=[];
+      if(e.actual!=null) vals.push(`<span class="cal-${e.beat||'inline'}">A ${e.actual}</span>`);
+      if(e.forecast!=null) vals.push(`F ${e.forecast}`);
+      if(e.previous!=null) vals.push(`P ${e.previous}`);
+      return `<li><span class="cal-imp imp-${e.color}"></span><span class="cal-ccy">${e.currency}</span><span class="cal-time">${calTime(e.time)}</span><span class="cal-title">${e.title}</span><span class="cal-vals">${vals.join(' · ')||'—'}</span></li>`;
+    }).join('');
+  }catch(e){ $('callist').innerHTML='<li>Calendar unavailable — '+e.message+'</li>'; }
 }
 
 // ---- AI analyst note (on-demand; costs an API call, so not auto) ----
@@ -449,14 +497,17 @@ $('constSearch').oninput=renderConst;
 // ---- scheduling ----
 let timer=null;
 function schedule(){ if(timer) clearInterval(timer); if($('auto').checked) timer=setInterval(()=>load(false),10000); }
-$('refresh').onclick=()=>{load(true); loadNews(); updateCharts();};
+$('refresh').onclick=()=>{load(true); loadNews(); loadCalendar(); updateCharts();};
 $('auto').onchange=schedule;
 $('hiOnly').onchange=loadNews;
+$('relOnly').onchange=loadNews;
+$('calHigh').onchange=loadCalendar;
 
 buildTfBar();
 buildCharts();
-load(false); loadNews(); schedule();
+load(false); loadNews(); loadCalendar(); schedule();
 setInterval(loadNews, 120000); // news every 2 min
+setInterval(loadCalendar, 300000); // calendar every 5 min
 setInterval(updateCharts, 30000); // charts every 30s (for 1m/5m liveness)
 </script>
 </body>
