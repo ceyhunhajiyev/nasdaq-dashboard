@@ -5,3 +5,7 @@ __pycache__/
 *.log
 .DS_Store
 nasdaq_update/
+
+backtest_report.html
+
+backtest_report.html
