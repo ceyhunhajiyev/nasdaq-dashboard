@@ -35,6 +35,10 @@
   .sig .badge{display:inline-block; font-family:var(--mono); font-size:11px; letter-spacing:.06em; text-transform:uppercase; padding:4px 10px; border-radius:6px; margin-bottom:12px}
   .b-long{background:var(--bull); color:#06110d} .b-short{background:var(--bear); color:#160604} .b-none{border:1px solid var(--line); color:var(--ink-dim)}
   .b-fresh{background:var(--amber); color:#160f02; margin-left:6px}
+  .align-ok{background:var(--bull); color:#06110d} .align-warn{background:var(--bear); color:#160604} .align-neutral{border:1px solid var(--line); color:var(--ink-dim)}
+  .validnote{font-family:var(--mono); font-size:11px; line-height:1.5; margin:10px 0; padding:8px 10px; border-radius:6px}
+  .v-ok{color:var(--bull); border:1px solid var(--bull-dim); background:#0d1f18}
+  .v-caution{color:var(--amber); border:1px solid #4a3a17; background:#20190a}
   .lvl{display:flex; justify-content:space-between; font-family:var(--mono); font-size:13px; padding:8px 0; border-bottom:1px solid #1c2530}
   .lvl:last-child{border-bottom:none}
   .lvl .k{color:var(--ink-faint); text-transform:uppercase; font-size:10.5px; letter-spacing:.06em}
@@ -78,6 +82,8 @@
     </div>
     <div class="panel sig">
       <span class="badge b-none" id="sigBadge">—</span>
+      <span class="badge" id="alignBadge" style="display:none"></span>
+      <div class="validnote" id="validNote" style="display:none"></div>
       <div id="levels"></div>
       <div class="reason" id="reason"></div>
     </div>
@@ -138,6 +144,15 @@ async function load(refresh=false){
       addLine(sig.tp1,'#3fb98f','TP1'); addLine(sig.tp2,'#3fb98f','TP2');
       series.setMarkers([{time:sig.time, position:sig.signal==='long'?'belowBar':'aboveBar', color:sig.signal==='long'?'#3fb98f':'#e5654b', shape:sig.signal==='long'?'arrowUp':'arrowDown', text:sig.signal.toUpperCase()}]);
       const b=$('sigBadge'); b.textContent=sig.signal.toUpperCase(); b.className='badge '+(sig.signal==='long'?'b-long':'b-short');
+      // trend-alignment badge (the backtested edge: aligned good, counter-trend lost)
+      const ab=$('alignBadge'); ab.style.display='inline-block';
+      if(sig.trend==='neutral'){ ab.textContent='no clear trend'; ab.className='badge align-neutral'; }
+      else if(sig.aligned){ ab.textContent='✓ trend-aligned'; ab.className='badge align-ok'; }
+      else { ab.textContent='⚠ counter-trend'; ab.className='badge align-warn'; }
+      // validation note for this instrument/timeframe
+      const vn=$('validNote'); vn.style.display='block';
+      if(d.validated){ vn.className='validnote v-ok'; vn.textContent='Backtest: on this instrument/timeframe, trend-aligned setups showed a positive out-of-sample edge after costs. Promising — trade small and track it, not guaranteed.'; }
+      else { vn.className='validnote v-caution'; vn.textContent='Not among the backtest-positive combos. Strongest evidence was on 15M for US100/US30/XAU/XAG, trend-aligned only. Treat setups here with extra caution.'; }
       $('levels').innerHTML=
         `<div class="lvl"><span class="k">Entry</span><span class="v entry">${sig.entry}</span></div>`+
         `<div class="lvl"><span class="k">Stop loss</span><span class="v sl">${sig.sl}</span></div>`+
@@ -147,6 +162,7 @@ async function load(refresh=false){
       $('reason').textContent=sig.reason+'.';
     }else{
       series.setMarkers([]); const b=$('sigBadge'); b.textContent='NO SETUP'; b.className='badge b-none';
+      $('alignBadge').style.display='none'; $('validNote').style.display='none';
       $('levels').innerHTML='<div class="lvl"><span class="k">Status</span><span class="v">waiting for a sweep-reclaim</span></div>';
       $('reason').textContent='No sweep-reclaim in recent 1H bars.';
     }

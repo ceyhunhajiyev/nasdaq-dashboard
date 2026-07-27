@@ -195,22 +195,21 @@ def _atr(ohlc: List[dict], n: int = 14) -> float:
     return sum(trs[-n:]) / n
 
 
-def detect_signals(ohlc: List[dict], lookback: int = 20, buffer_atr: float = 0.1,
-                   rr2: float = 2.0) -> dict:
+def all_signals(ohlc: List[dict], lookback: int = 20, buffer_atr: float = 0.1,
+                rr2: float = 2.0) -> List[dict]:
+    """Every sweep-reclaim signal in the series, with entry/sl/tp1/tp2.
+    Shared by the live panel and the backtest so they test the SAME rule."""
     n = len(ohlc)
     if n < lookback + 3:
-        return {"last": None, "fresh": False, "count": 0}
-    atr = _atr(ohlc, 14)
-    buf = atr * buffer_atr
+        return []
+    buf = _atr(ohlc, 14) * buffer_atr
     sigs = []
     for i in range(lookback + 1, n):
         prior_low = min(ohlc[j]["low"] for j in range(i - lookback, i))
         prior_high = max(ohlc[j]["high"] for j in range(i - lookback, i))
         bar = ohlc[i]
         if bar["low"] < prior_low and bar["close"] > prior_low:
-            entry = bar["close"]
-            stop = min(bar["low"], prior_low) - buf
-            risk = entry - stop
+            entry = bar["close"]; stop = min(bar["low"], prior_low) - buf; risk = entry - stop
             if risk > 0:
                 sigs.append({"i": i, "time": bar["time"], "signal": "long",
                              "entry": round(entry, 4), "sl": round(stop, 4),
@@ -218,22 +217,61 @@ def detect_signals(ohlc: List[dict], lookback: int = 20, buffer_atr: float = 0.1
                              "rr": round(rr2, 2),
                              "reason": f"Swept swing low {prior_low:.2f} and reclaimed"})
         elif bar["high"] > prior_high and bar["close"] < prior_high:
-            entry = bar["close"]
-            stop = max(bar["high"], prior_high) + buf
-            risk = stop - entry
+            entry = bar["close"]; stop = max(bar["high"], prior_high) + buf; risk = stop - entry
             if risk > 0:
                 sigs.append({"i": i, "time": bar["time"], "signal": "short",
                              "entry": round(entry, 4), "sl": round(stop, 4),
                              "tp1": round(entry - risk, 4), "tp2": round(entry - risk * rr2, 4),
                              "rr": round(rr2, 2),
                              "reason": f"Swept swing high {prior_high:.2f} and reclaimed"})
+    return sigs
+
+
+def detect_signals(ohlc: List[dict], lookback: int = 20, buffer_atr: float = 0.1,
+                   rr2: float = 2.0) -> dict:
+    n = len(ohlc)
+    sigs = all_signals(ohlc, lookback, buffer_atr, rr2)
     last = sigs[-1] if sigs else None
     return {"last": last, "fresh": bool(last and last["i"] == n - 1), "count": len(sigs)}
+
+
+# Instrument/timeframe combos where the TREND-FILTERED rule showed a positive,
+# cost-adjusted, out-of-sample edge with a non-trivial sample (OOS n >= ~25).
+# From the backtest: strongest and most consistent on 15m across these four.
+VALIDATED_COMBOS = {("US100", "15m"), ("US30", "15m"), ("XAU", "15m"), ("XAG", "15m")}
+
+
+def _ema(closes, period):
+    k = 2 / (period + 1)
+    e = None
+    for c in closes:
+        e = c if e is None else c * k + e * (1 - k)
+    return e
+
+
+def _trend_at(ohlc, i):
+    """Trend direction at bar i — identical logic to the backtest filter."""
+    closes = [b["close"] for b in ohlc[:i + 1]]
+    if len(closes) < 50:
+        return "neutral"
+    e20 = _ema(closes, 20); e50 = _ema(closes, 50); c = closes[-1]
+    if c > e50 and e20 > e50:
+        return "bull"
+    if c < e50 and e20 < e50:
+        return "bear"
+    return "neutral"
 
 
 def build_signals(instrument: str, provider, bars: int = 150, tf: str = "1h") -> dict:
     ohlc, source = get_ohlc(instrument, provider, bars, tf)
     det = detect_signals(ohlc)
+    sig = det.get("last")
+    if sig and ohlc:
+        trend = _trend_at(ohlc, sig["i"])
+        long = sig["signal"] == "long"
+        sig["trend"] = trend
+        sig["aligned"] = (long and trend == "bull") or ((not long) and trend == "bear")
     return {"instrument": instrument, "tf": tf, "ohlc": ohlc, "source": source, "signal": det,
+            "validated": (instrument, tf) in VALIDATED_COMBOS,
             "disclaimer": f"Rules-based {tf} sweep-reclaim levels. Decision-support, "
                           "not a validated edge and not financial advice."}
