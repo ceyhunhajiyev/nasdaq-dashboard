@@ -6,3 +6,5 @@ yfinance>=0.2.40
 # MetaTrader5  -> install ONLY on Windows for phase 2 (pip install MetaTrader5)
 
 httpx>=0.27
+
+feedparser>=6.0
