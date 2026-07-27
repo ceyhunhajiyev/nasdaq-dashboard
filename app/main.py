@@ -7,7 +7,7 @@ Open: http://localhost:8000
 from __future__ import annotations
 import time
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Body
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -18,6 +18,7 @@ from . import analysis
 from . import metals as metals_mod
 from . import signals as signals_mod
 from . import econcal
+from . import journal
 
 app = FastAPI(title="Nasdaq-100 Internals Dashboard")
 
@@ -193,6 +194,26 @@ def signals_page():
     return FileResponse(_STATIC / "signals.html")
 
 
+# --- multi-timeframe conviction scan ----------------------------------------
+_conv_cache: dict = {}
+
+
+@app.get("/api/conviction")
+def api_conviction(instrument: str = "US100", refresh: bool = False):
+    key = instrument.upper()
+    now = time.time()
+    e = _conv_cache.get(key)
+    if refresh or not e or now - e["ts"] > 30:
+        try:
+            data = signals_mod.build_conviction(key, PROVIDER)
+        except Exception as ex:
+            return {"error": str(ex), "instrument": key, "timeframes": []}
+        _conv_cache[key] = {"ts": now, "data": data}
+    out = dict(_conv_cache[key]["data"])
+    out["timestamp"] = _conv_cache[key]["ts"]
+    return out
+
+
 # --- economic calendar (ForexFactory-style) ---------------------------------
 _cal_cache = {"ts": 0.0, "data": None}
 
@@ -206,6 +227,35 @@ def api_calendar(min_impact: str = "Medium", refresh: bool = False):
     out = dict(_cal_cache["data"])
     out["timestamp"] = _cal_cache["ts"]
     return out
+
+
+# --- trade journal ----------------------------------------------------------
+@app.get("/api/journal")
+def journal_get():
+    return {"trades": journal.all_trades(), "stats": journal.stats()}
+
+
+@app.post("/api/journal/add")
+def journal_add(payload: dict = Body(...)):
+    return journal.add(payload)
+
+
+@app.post("/api/journal/close")
+def journal_close(payload: dict = Body(...)):
+    journal.close(int(payload["id"]), outcome=payload.get("outcome"),
+                  result_R=payload.get("result_R"))
+    return {"ok": True, "stats": journal.stats()}
+
+
+@app.post("/api/journal/delete")
+def journal_delete(payload: dict = Body(...)):
+    journal.delete(int(payload["id"]))
+    return {"ok": True}
+
+
+@app.get("/journal")
+def journal_page():
+    return FileResponse(_STATIC / "journal.html")
 
 
 # --- frontend ---------------------------------------------------------------

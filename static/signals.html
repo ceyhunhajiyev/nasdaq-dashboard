@@ -28,6 +28,21 @@
   main{max-width:1200px; margin:0 auto; padding:22px}
   .eyebrow{font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-faint); margin:0 0 10px}
   .instrument-title{font-size:22px; font-weight:700; margin:0 0 12px} .instrument-title span{color:var(--ink-faint); font-family:var(--mono); font-size:13px; font-weight:400}
+  .conv{margin-bottom:18px}
+  .conv-head{display:flex; align-items:center; justify-content:space-between; gap:16px}
+  .conv-eyebrow{font-family:var(--mono); font-size:10px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-faint); margin-bottom:4px}
+  .conv-verdict{font-size:18px; font-weight:600}
+  .conv-grade{font-size:40px; font-weight:700; font-family:var(--mono); width:66px; height:66px; display:flex; align-items:center; justify-content:center; border-radius:12px; flex:none}
+  .grade-A{background:var(--bull); color:#06110d} .grade-B{background:var(--steel); color:#06110d}
+  .grade-C{background:#3a3f2a; color:var(--amber)} .grade-D{background:#3a2420; color:var(--bear)} .grade-none{border:1px solid var(--line); color:var(--ink-faint)}
+  .conv-strip{display:flex; gap:8px; margin:14px 0 6px; flex-wrap:wrap}
+  .conv-tf{flex:1; min-width:80px; border:1px solid var(--line); border-radius:9px; padding:9px 8px; cursor:pointer; text-align:center; transition:border-color .15s}
+  .conv-tf:hover{border-color:var(--steel)}
+  .conv-tf .t{font-family:var(--mono); font-size:11px; color:var(--ink-dim); letter-spacing:.06em}
+  .conv-tf .g{font-family:var(--mono); font-size:20px; font-weight:700; margin:3px 0}
+  .conv-tf .d{font-family:var(--mono); font-size:9px; color:var(--ink-faint); text-transform:uppercase}
+  .cg-A{color:var(--bull)} .cg-B{color:var(--steel)} .cg-C{color:var(--amber)} .cg-D{color:var(--bear)} .cg-none{color:var(--ink-faint)}
+  .conv-note{font-family:var(--mono); font-size:11px; color:var(--ink-dim); line-height:1.5; margin-top:8px}
   .panel{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px}
   .tvbox{padding:8px; margin-bottom:16px} .tvwrap{height:360px}
   .layout{display:grid; grid-template-columns:1fr 300px; gap:16px; align-items:start}
@@ -56,6 +71,7 @@
   <div class="brand">SIGNALS <b>1H</b></div>
   <a href="/" class="navlink">← Internals</a>
   <a href="/metals" class="navlink">Metals</a>
+  <a href="/journal" class="navlink">Journal</a>
   <div class="spacer"></div>
   <span class="tfbar" id="tfbar"></span>
   <select id="inst">
@@ -73,6 +89,18 @@
 <main>
   <h1 class="instrument-title" id="title">—</h1>
 
+  <section class="panel conv" id="convBox">
+    <div class="conv-head">
+      <div>
+        <div class="conv-eyebrow">Best setup across all timeframes</div>
+        <div id="convVerdict" class="conv-verdict">Scanning…</div>
+      </div>
+      <div class="conv-grade" id="convGrade">—</div>
+    </div>
+    <div class="conv-strip" id="convStrip"></div>
+    <div class="conv-note" id="convNote"></div>
+  </section>
+
   <p class="eyebrow">1H sweep-reclaim signal — levels drawn on chart</p>
   <div class="layout">
     <div class="panel">
@@ -86,6 +114,7 @@
       <div class="validnote" id="validNote" style="display:none"></div>
       <div id="levels"></div>
       <div class="reason" id="reason"></div>
+      <button id="logBtn" style="display:none;margin-top:12px;width:100%;font-family:var(--disp);font-weight:600;font-size:13px;color:var(--ink);background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:9px;cursor:pointer">＋ Log this setup</button>
     </div>
   </div>
 </main>
@@ -120,6 +149,7 @@ function ago(ts){ const s=Math.max(0,Math.round(Date.now()/1000-ts)); return s<6
 
 const TFS=['1m','5m','15m','1h','4h','1d'];
 let curTf='1h';
+let lastSig=null, lastConv=null;
 function buildTFBar(){
   $('tfbar').innerHTML=TFS.map(t=>`<button class="tfbtn${t===curTf?' act':''}" data-tf="${t}">${t.toUpperCase()}</button>`).join('');
   $('tfbar').querySelectorAll('.tfbtn').forEach(b=>b.onclick=()=>{ curTf=b.dataset.tf; $('tfbar').querySelectorAll('.tfbtn').forEach(x=>x.classList.remove('act')); b.classList.add('act'); load(false); });
@@ -160,19 +190,62 @@ async function load(refresh=false){
         `<div class="lvl"><span class="k">TP2 (${sig.rr}R)</span><span class="v tp">${sig.tp2}</span></div>`+
         (fresh?'<div style="margin-top:10px"><span class="badge b-fresh">NEW — on latest 1H bar</span></div>':'<div style="margin-top:10px;font-family:var(--mono);font-size:11px;color:var(--ink-faint)">most recent setup (not the current bar)</div>');
       $('reason').textContent=sig.reason+'.';
+      lastSig=sig; $('logBtn').style.display='block';
     }else{
       series.setMarkers([]); const b=$('sigBadge'); b.textContent='NO SETUP'; b.className='badge b-none';
       $('alignBadge').style.display='none'; $('validNote').style.display='none';
+      lastSig=null; $('logBtn').style.display='none';
       $('levels').innerHTML='<div class="lvl"><span class="k">Status</span><span class="v">waiting for a sweep-reclaim</span></div>';
       $('reason').textContent='No sweep-reclaim in recent 1H bars.';
     }
   }catch(e){ $('chartState').style.display='block'; $('chartState').textContent='Error — '+e.message; }
   $('foot').innerHTML='Live chart: TradingView (OANDA feed). Signal levels: computed on Yahoo index/commodity futures — scale-correct but a small offset from any single broker\'s price. For levels tick-matched to your XM execution, wire the MT5 feed.<br>Rules-based decision-support — not a validated edge and not financial advice.';
 }
-$('refresh').onclick=()=>load(true);
-$('inst').onchange=()=>{ load(false); };
-buildTFBar(); initChart(); load(false);
-setInterval(()=>load(false), 30000);
+$('refresh').onclick=()=>{load(true); loadConviction();};
+$('inst').onchange=()=>{ load(false); loadConviction(); };
+
+async function loadConviction(){
+  const inst=$('inst').value;
+  try{
+    const r=await fetch('/api/conviction?instrument='+inst); const d=await r.json();
+    if(d.error){ $('convVerdict').textContent='Scan unavailable'; return; }
+    lastConv=d;
+    const best=d.best||{};
+    const g=$('convGrade'); g.textContent=best.grade||'—'; g.className='conv-grade grade-'+(best.grade==='—'?'none':best.grade);
+    if(best.grade==='A'||best.grade==='B'){
+      const t = best.fresh ? 'now (fresh on latest bar)' : 'setup already formed — wait for the next';
+      $('convVerdict').textContent=`${(best.tf||'').toUpperCase()} · ${(best.direction||'').toUpperCase()} · ${t}`;
+    } else if(best.grade==='C'){ $('convVerdict').textContent='Low-conviction only — no strong setup right now'; }
+    else { $('convVerdict').textContent='No good setup — wait.'; }
+    $('convStrip').innerHTML=(d.timeframes||[]).map(t=>{
+      const cls=t.grade==='—'?'none':t.grade;
+      const dir=t.direction?`${t.direction.toUpperCase()}${t.fresh?' •':''}`:'—';
+      return `<div class="conv-tf" data-tf="${t.tf}"><div class="t">${t.tf.toUpperCase()}</div><div class="g cg-${cls}">${t.grade}</div><div class="d">${dir}</div></div>`;
+    }).join('');
+    $('convStrip').querySelectorAll('.conv-tf').forEach(el=>el.onclick=()=>{
+      curTf=el.dataset.tf;
+      $('tfbar').querySelectorAll('.tfbtn').forEach(x=>x.classList.toggle('act', x.dataset.tf===curTf));
+      load(false);
+    });
+    $('convNote').textContent=(best.reason||'')+' — Grades reflect the backtest: A = trend-aligned on a validated combo, B = aligned 4H, C = no proven edge, D = avoid (counter-trend / 5M / 1M). Tap a timeframe to load it. Promising is not guaranteed; not financial advice.';
+  }catch(e){ $('convVerdict').textContent='Scan error'; }
+}
+buildTFBar(); initChart(); load(false); loadConviction();
+setInterval(()=>{ load(false); loadConviction(); }, 30000);
+
+$('logBtn').onclick=async ()=>{
+  if(!lastSig) return;
+  let grade='—';
+  if(lastConv && lastConv.timeframes){ const row=lastConv.timeframes.find(t=>t.tf===curTf); if(row) grade=row.grade; }
+  const payload={instrument:$('inst').value, tf:curTf, grade, direction:lastSig.signal,
+                 entry:lastSig.entry, sl:lastSig.sl, tp1:lastSig.tp1, tp2:lastSig.tp2};
+  const b=$('logBtn'); b.textContent='Logging…';
+  try{
+    await fetch('/api/journal/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    b.textContent='✓ Logged — view in Journal';
+    setTimeout(()=>{ b.textContent='＋ Log this setup'; }, 2500);
+  }catch(e){ b.textContent='Log failed'; }
+};
 </script>
 </body>
 </html>

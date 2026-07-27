@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Trade Journal</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--bg:#0e141c;--panel:#151d28;--panel-2:#1b2531;--line:#26313f;--ink:#e8edf2;--ink-dim:#8b97a6;--ink-faint:#5c6675;
+    --bull:#3fb98f;--bull-dim:#1e5a48;--bear:#e5654b;--amber:#f2b544;--steel:#5b8fb0;
+    --mono:'IBM Plex Mono',ui-monospace,monospace;--disp:'Space Grotesk',system-ui,sans-serif;}
+  *{box-sizing:border-box} html,body{margin:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--disp);padding:0 0 48px}
+  a{color:var(--steel);text-decoration:none}
+  header{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:14px 22px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#121a24,#0e141c);position:sticky;top:0;z-index:10}
+  .brand{font-weight:700;letter-spacing:.14em;font-size:14px} .brand b{color:var(--amber)}
+  .navlink{font-family:var(--mono);font-size:11px;letter-spacing:.06em;color:var(--steel);border:1px solid var(--line);border-radius:999px;padding:3px 10px;text-transform:uppercase}
+  .spacer{flex:1}
+  main{max-width:1200px;margin:0 auto;padding:22px}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-faint);margin:0 0 10px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
+  .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px}
+  .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .stat .lab{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint)}
+  .stat .big{font-size:24px;font-weight:700;margin-top:6px}
+  .stat .sub{font-family:var(--mono);font-size:11px;color:var(--ink-dim);margin-top:4px}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left}
+  th{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint)}
+  .gb{font-family:var(--mono);font-weight:700;padding:2px 8px;border-radius:5px}
+  .gA{background:var(--bull);color:#06110d}.gB{background:var(--steel);color:#06110d}.gC{background:#3a3f2a;color:var(--amber)}.gD{background:#3a2420;color:var(--bear)}
+  .dir-long{color:var(--bull)}.dir-short{color:var(--bear)}
+  .res-pos{color:var(--bull);font-weight:600}.res-neg{color:var(--bear);font-weight:600}.res-zero{color:var(--ink-dim)}
+  button{font-family:var(--disp);font-weight:600;font-size:12px;color:var(--ink);background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:5px 9px;cursor:pointer;margin-right:4px}
+  button:hover{border-color:var(--steel)}
+  .b-sl{border-color:#5a2a20}.b-tp{border-color:var(--bull-dim)}
+  .x{color:var(--ink-faint);border:none;background:none;cursor:pointer;font-size:15px}
+  .note{font-family:var(--mono);font-size:11px;color:var(--ink-faint);line-height:1.6;margin-top:14px}
+  .empty{padding:40px;text-align:center;color:var(--ink-dim);font-family:var(--mono)}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">TRADE <b>JOURNAL</b></div>
+  <a href="/" class="navlink">← Internals</a>
+  <a href="/signals" class="navlink">Signals</a>
+  <div class="spacer"></div>
+  <div style="font-family:var(--mono);font-size:11px;color:var(--ink-faint)" id="updated"></div>
+</header>
+<main>
+  <p class="eyebrow">Live results by grade — vs backtest expectancy</p>
+  <section class="stats" id="stats"></section>
+  <p class="eyebrow">Logged trades</p>
+  <section class="panel">
+    <div id="tablewrap"><div class="empty">Loading…</div></div>
+  </section>
+  <div class="note" id="note"></div>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+function rcls(r){ return r>0?'res-pos':r<0?'res-neg':'res-zero'; }
+function fmtR(r){ return r==null?'—':(r>0?'+':'')+r.toFixed(2)+'R'; }
+function when(ts){ try{ return new Date(ts*1000).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}); }catch(e){ return ''; } }
+
+async function load(){
+  const r=await fetch('/api/journal'); const d=await r.json();
+  const s=d.stats||{}; const bg=s.by_grade||{};
+  const o=s.overall||{};
+  const cards=[
+    {lab:'Closed trades', big:o.n||0, sub:(s.open||0)+' still open'},
+    {lab:'Overall avg R', big:o.avg_R!=null?fmtR(o.avg_R):'—', sub:o.win_rate!=null?(o.win_rate*100).toFixed(0)+'% win':'no data'},
+    {lab:'Grade A (live)', big:bg.A&&bg.A.avg_R!=null?fmtR(bg.A.avg_R):'—', sub:'backtest hint '+fmtR(bg.A?bg.A.backtest_hint:null)+' · n='+((bg.A||{}).n||0)},
+    {lab:'Grade B (live)', big:bg.B&&bg.B.avg_R!=null?fmtR(bg.B.avg_R):'—', sub:'backtest hint '+fmtR(bg.B?bg.B.backtest_hint:null)+' · n='+((bg.B||{}).n||0)},
+    {lab:'Grade C/D (live)', big:(()=>{const cd=[bg.C,bg.D].filter(x=>x&&x.n); if(!cd.length)return '—'; const tot=cd.reduce((a,x)=>a+x.avg_R*x.n,0), n=cd.reduce((a,x)=>a+x.n,0); return fmtR(tot/n);})(), sub:'should be weak/negative'},
+  ];
+  $('stats').innerHTML=cards.map(c=>`<div class="stat"><div class="lab">${c.lab}</div><div class="big">${c.big}</div><div class="sub">${c.sub}</div></div>`).join('');
+
+  const trades=d.trades||[];
+  if(!trades.length){ $('tablewrap').innerHTML='<div class="empty">No trades logged yet. On the Signals page, click "Log this setup" to start tracking.</div>'; }
+  else{
+    $('tablewrap').innerHTML='<table><tr><th>Opened</th><th>Instrument</th><th>TF</th><th>Grade</th><th>Dir</th><th>Entry</th><th>SL</th><th>TP2</th><th>Result</th><th>Action</th></tr>'+
+      trades.map(t=>{
+        const closed=t.status==='closed';
+        const action=closed
+          ? `<span class="${rcls(t.result_R)}">${fmtR(t.result_R)}</span> <button class="x" onclick="del(${t.id})">×</button>`
+          : `<button class="b-sl" onclick="close_(${t.id},'sl')">SL</button><button onclick="close_(${t.id},'be')">BE</button><button class="b-tp" onclick="close_(${t.id},'tp1')">TP1</button><button class="b-tp" onclick="close_(${t.id},'tp2')">TP2</button>`;
+        return `<tr><td>${when(t.ts_open)}</td><td>${t.instrument}</td><td>${(t.tf||'').toUpperCase()}</td>`+
+          `<td><span class="gb g${t.grade}">${t.grade}</span></td><td class="dir-${t.direction}">${(t.direction||'').toUpperCase()}</td>`+
+          `<td>${t.entry??'—'}</td><td>${t.sl??'—'}</td><td>${t.tp2??'—'}</td>`+
+          `<td>${closed?'':'<span style="color:var(--ink-faint)">open</span>'}</td><td>${action}</td></tr>`;
+      }).join('')+'</table>';
+  }
+  $('note').innerHTML='Compare your <b>live Grade-A avg R</b> to the backtest hint (~+0.25R). If your live results hold up over 30-50 trades, the edge is real for you; if not, believe your live results over the backtest. Grades C/D should stay weak — if they do not, the grading needs revisiting. This is your record, not advice.';
+  $('updated').textContent='updated '+new Date().toLocaleTimeString();
+}
+async function close_(id, outcome){ await fetch('/api/journal/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,outcome})}); load(); }
+async function del(id){ if(confirm('Delete this trade from the log?')){ await fetch('/api/journal/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}); load(); } }
+load();
+</script>
+</body>
+</html>
