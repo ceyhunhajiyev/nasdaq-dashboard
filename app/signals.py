@@ -46,6 +46,37 @@ ALPACA_TF = {"1m": "1Min", "5m": "5Min", "15m": "15Min", "1h": "1Hour", "4h": "4
 TF_SECS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
 TF_DAYS = {"1m": 2, "5m": 5, "15m": 20, "1h": 30, "4h": 90, "1d": 365}
 
+# ---- MT5 (XM) live feed -----------------------------------------------------
+# instrument -> your XM/MT5 symbol name. These are GUESSES — XM naming varies.
+# Run the discovery command in the README to list your exact names, then edit.
+MT5_SYMBOLS = {
+    "US100": "US100Cash",
+    "SP500": "US500Cash",
+    "US30":  "US30Cash",
+    "XAU":   "GOLD",
+    "XAG":   "SILVER",
+    "XCU":   "COPPER",
+}
+MT5_TF = {"1m": "TIMEFRAME_M1", "5m": "TIMEFRAME_M5", "15m": "TIMEFRAME_M15",
+          "1h": "TIMEFRAME_H1", "4h": "TIMEFRAME_H4", "1d": "TIMEFRAME_D1"}
+
+
+def _mt5_ohlc(mt5_symbol: str, bars: int, tf: str = "1h") -> List[dict]:
+    import MetaTrader5 as mt5  # Windows-only; lazy import
+    if not mt5.initialize():
+        return []
+    tf_const = getattr(mt5, MT5_TF.get(tf, "TIMEFRAME_H1"))
+    mt5.symbol_select(mt5_symbol, True)
+    rates = mt5.copy_rates_from_pos(mt5_symbol, tf_const, 0, bars)
+    if rates is None:
+        return []
+    out = []
+    for r in rates:
+        out.append({"time": int(r["time"]), "open": float(r["open"]),
+                    "high": float(r["high"]), "low": float(r["low"]),
+                    "close": float(r["close"])})
+    return out
+
 
 # ============================ OHLC SOURCES =================================
 def _alpaca_ohlc(provider, symbol: str, bars: int, tf: str = "1h") -> List[dict]:
@@ -110,12 +141,26 @@ def _synth_ohlc(symbol: str, bars: int = 150, tf: str = "1h") -> List[dict]:
 
 
 def get_ohlc(instrument: str, provider, bars: int = 150, tf: str = "1h"):
-    """Returns (ohlc_list, source_label) at the requested timeframe. Tries the
-    correct-scale Yahoo futures first; falls back to Alpaca ETF for indices."""
+    """Returns (ohlc_list, source_label) at the requested timeframe.
+    If CHART_SOURCE=mt5, pulls LIVE from your XM MT5 terminal first (real-time,
+    correct scale). Otherwise / on failure, uses Yahoo futures, then Alpaca ETF."""
     sym = DATA_MAP.get(instrument)
     if not sym:
         return [], None
     name = getattr(provider, "name", "")
+
+    # 0) live MT5/XM feed (opt-in via CHART_SOURCE=mt5)
+    import os
+    if os.getenv("CHART_SOURCE", "yahoo").lower() == "mt5":
+        msym = MT5_SYMBOLS.get(instrument)
+        if msym:
+            try:
+                d = _mt5_ohlc(msym, bars, tf)
+                if d:
+                    return d, f"MT5 live ({msym})"
+            except Exception:
+                pass  # fall through to Yahoo if MT5 unavailable
+
     if name == "mock":
         return _synth_ohlc(sym, bars, tf), "synthetic"
 
