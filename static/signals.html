@@ -149,7 +149,7 @@ function ago(ts){ const s=Math.max(0,Math.round(Date.now()/1000-ts)); return s<6
 
 const TFS=['1m','5m','15m','1h','4h','1d'];
 let curTf='1h';
-let lastSig=null, lastConv=null;
+let lastSig=null, lastConv=null, chartSrc='', lastView='';
 function buildTFBar(){
   $('tfbar').innerHTML=TFS.map(t=>`<button class="tfbtn${t===curTf?' act':''}" data-tf="${t}">${t.toUpperCase()}</button>`).join('');
   $('tfbar').querySelectorAll('.tfbtn').forEach(b=>b.onclick=()=>{ curTf=b.dataset.tf; $('tfbar').querySelectorAll('.tfbtn').forEach(x=>x.classList.remove('act')); b.classList.add('act'); load(false); });
@@ -166,7 +166,11 @@ async function load(refresh=false){
     const ohlc=d.ohlc||[];
     if(!ohlc.length){ $('chartState').style.display='block'; $('chartState').textContent='No signal data for '+inst+' right now (Yahoo intraday may be unavailable — the TradingView chart above still shows live price).'; series.setData([]); clearLines(); return; }
     $('chartState').style.display='none';
-    series.setData(ohlc); chart.timeScale().fitContent(); clearLines();
+    if(d.source) chartSrc=d.source;
+    series.setData(ohlc);
+    const viewKey=inst+curTf;
+    if(viewKey!==lastView){ chart.timeScale().fitContent(); lastView=viewKey; }  // fit only on change
+    clearLines();
     const sig=(d.signal||{}).last, fresh=(d.signal||{}).fresh;
     $('updated').textContent=d.timestamp?'updated '+ago(d.timestamp):'';
     if(sig){
@@ -231,14 +235,19 @@ async function loadConviction(){
   }catch(e){ $('convVerdict').textContent='Scan error'; }
 }
 buildTFBar(); initChart(); load(false); loadConviction();
-setInterval(()=>{ load(false); loadConviction(); }, 30000);
+function loopSignal(){
+  const ms=(chartSrc||'').startsWith('MT5')?2000:15000;  // 2s live on MT5, 15s safe on Yahoo
+  setTimeout(async()=>{ await load(false); loopSignal(); }, ms);
+}
+loopSignal();
+setInterval(loadConviction, 15000); // grades update every 15s (slow-moving)
 
 $('logBtn').onclick=async ()=>{
   if(!lastSig) return;
   let grade='—';
   if(lastConv && lastConv.timeframes){ const row=lastConv.timeframes.find(t=>t.tf===curTf); if(row) grade=row.grade; }
   const payload={instrument:$('inst').value, tf:curTf, grade, direction:lastSig.signal,
-                 entry:lastSig.entry, sl:lastSig.sl, tp1:lastSig.tp1, tp2:lastSig.tp2};
+                 bar_time:lastSig.time, entry:lastSig.entry, sl:lastSig.sl, tp1:lastSig.tp1, tp2:lastSig.tp2};
   const b=$('logBtn'); b.textContent='Logging…';
   try{
     await fetch('/api/journal/add',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});

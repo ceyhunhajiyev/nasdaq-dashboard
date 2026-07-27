@@ -101,6 +101,7 @@ const CHARTS=[
 ];
 const TFS=['1m','5m','15m','1h','4h','1d'];
 let metTf='1h';
+let chartSrc='';
 const metCharts=[];
 let msyncing=false;
 function buildTfBar(){
@@ -145,14 +146,19 @@ function buildCharts(){
   });
   updateCharts();
 }
-async function updateCharts(){
+async function updateCharts(fit=true){
   for(const c of metCharts){
     try{
       const r=await fetch(`/api/signals?instrument=${c.inst}&tf=${metTf}`); const d=await r.json();
+      if(d.source) chartSrc=d.source;
       if(d.ohlc&&d.ohlc.length){ c.s.setData(d.ohlc); c.dataMap=new Map(d.ohlc.map(b=>[b.time,b.close])); }
     }catch(e){}
   }
-  if(metCharts[0]) metCharts[0].chart.timeScale().fitContent();
+  if(fit && metCharts[0]) metCharts[0].chart.timeScale().fitContent();
+}
+function loopCharts(){
+  const ms=(chartSrc||'').startsWith('MT5')?2000:15000;
+  setTimeout(async()=>{ await updateCharts(false); loopCharts(); }, ms);
 }
 function fmtPct(v){ if(v==null) return '—'; return (v>=0?'+':'')+v.toFixed(2)+'%'; }
 function biasColor(s){ if(s==null) return 'var(--line)'; if(s>=60) return 'var(--bull)'; if(s<=40) return 'var(--bear)'; return 'var(--steel)'; }
@@ -192,7 +198,7 @@ function render(d){
 $('refresh').onclick=()=>{load(true); updateCharts();};
 buildTfBar(); buildCharts(); load(false);
 setInterval(()=>load(false), 60000);
-setInterval(updateCharts, 30000); // charts every 30s (for 1m/5m liveness)
+loopCharts(); // 2s on MT5 (live), 15s on Yahoo (safe)
 </script>
 </body>
 </html>

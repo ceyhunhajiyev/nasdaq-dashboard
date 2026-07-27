@@ -40,14 +40,24 @@ def _get_snapshot(force: bool = False) -> dict:
     index_quote = quotes.pop(INDEX_PROXY, None)
     dash = metrics.build_dashboard(quotes, WEIGHTS, index_quote)
 
-    # transparent, rules-based US100 bias (decision-support, not a trade call)
+    # transparent, category-weighted US100 bias (decision-support, not a trade call)
     try:
-        closes = analysis.get_index_closes(PROVIDER, INDEX_PROXY, 400)
+        daily = signals_mod.get_ohlc("US100", PROVIDER, 300, "1d")[0]
+        c4 = [b["close"] for b in signals_mod.get_ohlc("US100", PROVIDER, 200, "4h")[0]]
+        c1 = [b["close"] for b in signals_mod.get_ohlc("US100", PROVIDER, 200, "1h")[0]]
     except Exception:
-        closes = []
-    dash["signal"] = analysis.compute_index_bias(
-        closes, dash["breadth"], dash["divergence"],
-        last=index_quote.last if index_quote else None, symbol="US100")
+        daily, c4, c1 = [], [], []
+    last = daily[-1]["close"] if daily else (index_quote.last if index_quote else None)
+    if daily:
+        dash["signal"] = analysis.compute_deep_bias(
+            daily, c4, c1, dash["breadth"], dash["divergence"], last=last, symbol="US100")
+    else:
+        try:
+            closes = analysis.get_index_closes(PROVIDER, INDEX_PROXY, 400)
+        except Exception:
+            closes = []
+        dash["signal"] = analysis.compute_index_bias(
+            closes, dash["breadth"], dash["divergence"], last=last, symbol="US100")
 
     dash["meta"] = {
         "provider": PROVIDER.name,
@@ -178,7 +188,7 @@ def api_signals(instrument: str = "US100", tf: str = "1h", refresh: bool = False
     key = f"{instrument.upper()}:{tf}"
     entry = _sig_cache.get(key)
     now = time.time()
-    if refresh or not entry or now - entry["ts"] > 30:
+    if refresh or not entry or now - entry["ts"] > 2:  # 2s cache → live on MT5
         try:
             data = signals_mod.build_signals(instrument.upper(), PROVIDER, tf=tf)
         except Exception as e:
@@ -232,7 +242,8 @@ def api_calendar(min_impact: str = "Medium", refresh: bool = False):
 # --- trade journal ----------------------------------------------------------
 @app.get("/api/journal")
 def journal_get():
-    return {"trades": journal.all_trades(), "stats": journal.stats()}
+    return {"trades": journal.all_trades(), "stats": journal.stats(),
+            "autolog": _autolog["enabled"]}
 
 
 @app.post("/api/journal/add")
@@ -256,6 +267,33 @@ def journal_delete(payload: dict = Body(...)):
 @app.get("/journal")
 def journal_page():
     return FileResponse(_STATIC / "journal.html")
+
+
+# --- background automation: auto-log fresh A/B setups + auto-resolve outcomes
+import threading
+_autolog = {"enabled": True}
+
+
+@app.post("/api/journal/autolog")
+def journal_autolog(payload: dict = Body(...)):
+    _autolog["enabled"] = bool(payload.get("enabled", True))
+    return {"enabled": _autolog["enabled"]}
+
+
+def _automation_loop():
+    while True:
+        try:
+            if _autolog["enabled"]:
+                journal.auto_scan_and_log(PROVIDER)
+            journal.auto_resolve(PROVIDER)
+        except Exception:
+            pass
+        time.sleep(60)
+
+
+@app.on_event("startup")
+def _start_automation():
+    threading.Thread(target=_automation_loop, daemon=True).start()
 
 
 # --- frontend ---------------------------------------------------------------

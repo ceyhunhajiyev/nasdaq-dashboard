@@ -122,6 +122,10 @@
   /* bias & AI */
   .biasrow{display:grid; grid-template-columns:1.5fr 1fr; gap:16px; margin-bottom:20px}
   .factors{margin-top:14px; display:flex; flex-direction:column; gap:7px}
+  .cat-head{display:flex; align-items:center; justify-content:space-between; margin:12px 0 4px; padding-bottom:4px; border-bottom:1px solid var(--line)}
+  .cat-head:first-child{margin-top:0}
+  .cat-name{font-family:var(--mono); font-size:10px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-dim)}
+  .cat-score{font-family:var(--mono); font-size:12px; font-weight:600}
   .factor{display:flex; align-items:center; gap:10px; font-size:13px}
   .factor .fdot{width:8px; height:8px; border-radius:50%; flex:none}
   .factor .fname{width:148px; color:var(--ink); font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:.04em}
@@ -284,6 +288,7 @@ const CHARTS=[
 ];
 const TFS=['1m','5m','15m','1h','4h','1d'];
 let idxTf='1h';
+let chartSrc='';
 const idxCharts=[];      // {chart, s, inst, dataMap}
 let syncing=false;
 
@@ -336,17 +341,22 @@ function buildCharts(){
   });
   updateCharts();
 }
-async function updateCharts(){
+async function updateCharts(fit=true){
   for(const c of idxCharts){
     try{
       const r=await fetch(`/api/signals?instrument=${c.inst}&tf=${idxTf}`); const d=await r.json();
+      if(d.source) chartSrc=d.source;
       if(d.ohlc&&d.ohlc.length){
         c.s.setData(d.ohlc);
         c.dataMap=new Map(d.ohlc.map(b=>[b.time, b.close]));
       }
     }catch(e){}
   }
-  if(idxCharts[0]) idxCharts[0].chart.timeScale().fitContent();  // sync applies to the rest
+  if(fit && idxCharts[0]) idxCharts[0].chart.timeScale().fitContent();  // only on load/tf change
+}
+function loopCharts(){
+  const ms=(chartSrc||'').startsWith('MT5')?2000:15000;  // 2s live on MT5, 15s safe on Yahoo
+  setTimeout(async()=>{ await updateCharts(false); loopCharts(); }, ms);
 }
 
 // ---- helpers ----
@@ -387,10 +397,21 @@ function render(d){
   if(sig){
     $('sigLabel').textContent=sig.bias||'—';
     $('sigLabel').style.color=sig.score==null?'var(--ink)':biasColor(sig.score);
-    $('sigSub').textContent=(sig.score==null?'Rules-based bias':'Rules-based bias · '+sig.score+'/100')+(sig.caution?' · ⚠ divergence':'');
+    $('sigSub').textContent=(sig.score==null?'Bias':(sig.categories?'Deep bias (daily, category-weighted) · ':'Rules-based bias · ')+sig.score+'/100')+(sig.caution?' · ⚠ divergence':'');
     $('sigFill').style.width=(sig.score||0)+'%';
     $('sigFill').style.background=sig.score==null?'var(--line)':biasColor(sig.score);
-    $('factors').innerHTML=(sig.factors||[]).map(f=>`<div class="factor"><span class="fdot dot-${f.signal}"></span><span class="fname">${f.name}</span><span class="fdetail">${f.detail}</span></div>`).join('');
+    if(sig.categories){
+      const factor=f=>`<div class="factor"><span class="fdot dot-${f.signal}"></span><span class="fname">${f.name}</span><span class="fdetail">${f.detail}</span></div>`;
+      let html=sig.categories.map(c=>{
+        const sc=c.score==null?'—':c.score;
+        const col=c.score==null?'var(--ink-faint)':biasColor(c.score);
+        return `<div class="cat-head"><span class="cat-name">${c.name}${c.weight>1?' ·★':''}</span><span class="cat-score" style="color:${col}">${sc}</span></div>`+(c.factors||[]).map(factor).join('');
+      }).join('');
+      if(sig.context&&sig.context.length){ html+='<div class="cat-head"><span class="cat-name">Context</span></div>'+sig.context.map(factor).join(''); }
+      $('factors').innerHTML=html;
+    } else {
+      $('factors').innerHTML=(sig.factors||[]).map(f=>`<div class="factor"><span class="fdot dot-${f.signal}"></span><span class="fname">${f.name}</span><span class="fdetail">${f.detail}</span></div>`).join('');
+    }
   }
   $('biasLabel').textContent=b.label||'—';
   $('biasLabel').style.color=b.score==null?'var(--ink)':biasColor(b.score);
@@ -508,7 +529,7 @@ buildCharts();
 load(false); loadNews(); loadCalendar(); schedule();
 setInterval(loadNews, 120000); // news every 2 min
 setInterval(loadCalendar, 300000); // calendar every 5 min
-setInterval(updateCharts, 30000); // charts every 30s (for 1m/5m liveness)
+loopCharts(); // charts: 2s on MT5 (live), 15s on Yahoo (safe)
 </script>
 </body>
 </html>
