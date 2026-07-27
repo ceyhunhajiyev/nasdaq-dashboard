@@ -275,3 +275,54 @@ def build_signals(instrument: str, provider, bars: int = 150, tf: str = "1h") ->
             "validated": (instrument, tf) in VALIDATED_COMBOS,
             "disclaimer": f"Rules-based {tf} sweep-reclaim levels. Decision-support, "
                           "not a validated edge and not financial advice."}
+
+
+CONV_TFS = ["1m", "5m", "15m", "1h", "4h", "1d"]
+GRADE_RANK = {"A": 4, "B": 3, "C": 2, "D": 1, "—": 0}
+
+
+def grade_setup(instrument: str, tf: str, det: dict, validated: bool) -> dict:
+    """Grade a setup by what the BACKTEST actually showed, not wishful thinking.
+    A = trend-aligned on a validated combo (the only evidenced edge: 15m majors)
+    B = trend-aligned on 4H (positive but thin sample)
+    C = aligned-but-unvalidated, or no clear trend (no proven edge)
+    D = counter-trend (lost), 5M (negative), or 1M (untested noise)"""
+    sig = det.get("last")
+    if not sig:
+        return {"grade": "—", "reason": "no setup on this timeframe"}
+    trend = sig.get("trend"); aligned = sig.get("aligned")
+    if tf == "1m":
+        return {"grade": "D", "reason": "1M is untested noise — not for trading"}
+    if aligned is False and trend != "neutral":
+        return {"grade": "D", "reason": "counter-trend — this direction lost in the backtest"}
+    if tf == "5m":
+        return {"grade": "D", "reason": "5M was negative in the backtest even trend-aligned"}
+    if trend == "neutral":
+        return {"grade": "C", "reason": "no clear trend — low conviction"}
+    if validated:
+        return {"grade": "A", "reason": "trend-aligned on a backtest-validated combo (best available)"}
+    if tf == "4h":
+        return {"grade": "B", "reason": "trend-aligned on 4H (positive but thin sample)"}
+    return {"grade": "C", "reason": "trend-aligned but this instrument/timeframe didn't validate"}
+
+
+def build_conviction(instrument: str, provider) -> dict:
+    """Scan every timeframe for the instrument, grade each, and pick the best."""
+    results = []
+    for tf in CONV_TFS:
+        d = build_signals(instrument, provider, tf=tf)
+        det = d["signal"]
+        g = grade_setup(instrument, tf, det, d["validated"])
+        sig = det.get("last")
+        results.append({
+            "tf": tf, "grade": g["grade"], "reason": g["reason"],
+            "validated": d["validated"], "fresh": bool(det.get("fresh")),
+            "direction": sig["signal"] if sig else None,
+            "trend": sig.get("trend") if sig else None,
+            "aligned": sig.get("aligned") if sig else None,
+            "entry": sig.get("entry") if sig else None, "sl": sig.get("sl") if sig else None,
+            "tp1": sig.get("tp1") if sig else None, "tp2": sig.get("tp2") if sig else None,
+        })
+    best = max(results, key=lambda r: (GRADE_RANK[r["grade"]], r["fresh"], r["validated"]))
+    return {"instrument": instrument, "timeframes": results, "best": best,
+            "actionable": best["grade"] in ("A", "B") and best["fresh"]}
