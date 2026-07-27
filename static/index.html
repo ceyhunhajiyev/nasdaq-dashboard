@@ -38,7 +38,10 @@
   /* charts */
   .charts{display:grid; grid-template-columns:repeat(3,1fr); gap:14px; margin-bottom:20px}
   .chartbox{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:8px; overflow:hidden}
-  .chartbox .cap{font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-dim); padding:6px 8px 8px}
+  .chartbox .cap{font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--ink-dim); padding:6px 8px 8px; display:flex; align-items:center; gap:8px}
+  .tfbtns{margin-left:auto; display:inline-flex; gap:3px}
+  .tfbtn{font-family:var(--mono); font-size:9.5px; padding:2px 6px; background:transparent; border:1px solid var(--line); border-radius:4px; color:var(--ink-faint); cursor:pointer}
+  .tfbtn:hover{color:var(--ink)} .tfbtn.act{background:var(--steel); color:#06110d; border-color:var(--steel)}
   .tvwrap{height:300px}
 
   /* two-column body */
@@ -252,9 +255,10 @@ const CHARTS=[
   {id:'lc_sp500', inst:'SP500', title:'SP500'},
   {id:'lc_us30',  inst:'US30',  title:'US30 · Dow'},
 ];
-const chartSeries={};
+const TFS=['1m','5m','15m','1h','4h','1d'];
+const chartState={};
 function buildCharts(){
-  $('charts').innerHTML=CHARTS.map(c=>`<div class="chartbox"><div class="cap">${c.title}</div><div class="tvwrap" id="${c.id}"></div></div>`).join('');
+  $('charts').innerHTML=CHARTS.map(c=>`<div class="chartbox"><div class="cap">${c.title}<span class="tfbtns" data-inst="${c.inst}">${TFS.map(t=>`<button class="tfbtn" data-tf="${t}">${t.toUpperCase()}</button>`).join('')}</span></div><div class="tvwrap" id="${c.id}"></div></div>`).join('');
   if(!window.LightweightCharts) return;
   CHARTS.forEach(c=>{
     const el=$(c.id);
@@ -264,20 +268,26 @@ function buildCharts(){
       rightPriceScale:{borderColor:'#26313f'},timeScale:{borderColor:'#26313f',timeVisible:true,secondsVisible:false},
       crosshair:{mode:0}});
     const s=chart.addCandlestickSeries({upColor:'#3fb98f',downColor:'#e5654b',borderVisible:false,wickUpColor:'#3fb98f',wickDownColor:'#e5654b'});
-    chartSeries[c.inst]={chart,s};
+    chartState[c.inst]={chart,s,tf:'1h'};
     window.addEventListener('resize',()=>chart.applyOptions({width:el.clientWidth}));
+  });
+  document.querySelectorAll('.tfbtns').forEach(grp=>{
+    const inst=grp.dataset.inst;
+    grp.querySelectorAll('.tfbtn').forEach(b=>{
+      if(b.dataset.tf===chartState[inst].tf) b.classList.add('act');
+      b.onclick=()=>{ chartState[inst].tf=b.dataset.tf; grp.querySelectorAll('.tfbtn').forEach(x=>x.classList.remove('act')); b.classList.add('act'); loadChart(inst); };
+    });
   });
   updateCharts();
 }
-async function updateCharts(){
-  for(const c of CHARTS){
-    try{
-      const r=await fetch('/api/signals?instrument='+c.inst); const d=await r.json();
-      const cs=chartSeries[c.inst]; if(!cs) continue;
-      if(d.ohlc&&d.ohlc.length){ cs.s.setData(d.ohlc); cs.chart.timeScale().fitContent(); }
-    }catch(e){}
-  }
+async function loadChart(inst){
+  const st=chartState[inst]; if(!st) return;
+  try{
+    const r=await fetch(`/api/signals?instrument=${inst}&tf=${st.tf}`); const d=await r.json();
+    if(d.ohlc&&d.ohlc.length){ st.s.setData(d.ohlc); st.chart.timeScale().fitContent(); }
+  }catch(e){}
 }
+function updateCharts(){ CHARTS.forEach(c=>loadChart(c.inst)); }
 
 // ---- helpers ----
 function fmtPct(v){ if(v==null) return '—'; return (v>=0?'+':'')+v.toFixed(2)+'%'; }
@@ -413,6 +423,7 @@ $('hiOnly').onchange=loadNews;
 buildCharts();
 load(false); loadNews(); schedule();
 setInterval(loadNews, 120000); // news every 2 min
+setInterval(updateCharts, 30000); // charts every 30s (for 1m/5m liveness)
 </script>
 </body>
 </html>

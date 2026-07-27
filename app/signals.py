@@ -33,14 +33,28 @@ DATA_MAP = {
 # the futures scale, so this is for keeping charts alive, not for exact levels.
 ALPACA_ETF = {"US100": "QQQ", "SP500": "SPY", "US30": "DIA"}
 
+# timeframe -> yfinance (interval, period) [+ optional resample from a base interval]
+TF_MAP = {
+    "1m":  {"interval": "1m",  "period": "5d"},
+    "5m":  {"interval": "5m",  "period": "5d"},
+    "15m": {"interval": "15m", "period": "1mo"},
+    "1h":  {"interval": "1h",  "period": "30d"},
+    "4h":  {"interval": "1h",  "period": "60d", "resample": "4h"},  # yfinance has no 4h
+    "1d":  {"interval": "1d",  "period": "1y"},
+}
+ALPACA_TF = {"1m": "1Min", "5m": "5Min", "15m": "15Min", "1h": "1Hour", "4h": "4Hour", "1d": "1Day"}
+TF_SECS = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
+TF_DAYS = {"1m": 2, "5m": 5, "15m": 20, "1h": 30, "4h": 90, "1d": 365}
+
 
 # ============================ OHLC SOURCES =================================
-def _alpaca_ohlc(provider, symbol: str, bars: int) -> List[dict]:
+def _alpaca_ohlc(provider, symbol: str, bars: int, tf: str = "1h") -> List[dict]:
     import httpx
-    start = (dt.datetime.utcnow() - dt.timedelta(days=25)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    days = TF_DAYS.get(tf, 30)
+    start = (dt.datetime.utcnow() - dt.timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     with httpx.Client(timeout=15, headers=provider._headers) as c:
         r = c.get(f"{provider.BASE}/v2/stocks/bars",
-                  params={"symbols": symbol, "timeframe": "1Hour",
+                  params={"symbols": symbol, "timeframe": ALPACA_TF.get(tf, "1Hour"),
                           "start": start, "limit": 10000, "feed": provider.feed})
         r.raise_for_status()
         arr = r.json().get("bars", {}).get(symbol, [])
@@ -51,17 +65,21 @@ def _alpaca_ohlc(provider, symbol: str, bars: int) -> List[dict]:
     return out
 
 
-def _yf_ohlc(symbol: str, bars: int) -> List[dict]:
+def _yf_ohlc(symbol: str, bars: int, tf: str = "1h") -> List[dict]:
     import yfinance as yf
     import pandas as pd
-    df = yf.download(symbol, period="30d", interval="1h", progress=False, auto_adjust=False)
+    cfg = TF_MAP.get(tf, TF_MAP["1h"])
+    df = yf.download(symbol, period=cfg["period"], interval=cfg["interval"],
+                     progress=False, auto_adjust=False)
     if df is None or df.empty:
         return []
-    # newer yfinance returns multi-index columns like ('Open','NQ=F'); flatten to field name
     if isinstance(df.columns, pd.MultiIndex):
         df = df.copy()
         df.columns = df.columns.get_level_values(0)
     df = df.loc[:, ~df.columns.duplicated()]
+    if cfg.get("resample"):
+        df = df.resample(cfg["resample"], label="left", closed="left").agg(
+            {"Open": "first", "High": "max", "Low": "min", "Close": "last"}).dropna()
     out = []
     for idx, row in df.tail(bars).iterrows():
         try:
@@ -73,10 +91,11 @@ def _yf_ohlc(symbol: str, bars: int) -> List[dict]:
     return out
 
 
-def _synth_ohlc(symbol: str, bars: int = 150) -> List[dict]:
+def _synth_ohlc(symbol: str, bars: int = 150, tf: str = "1h") -> List[dict]:
     import random, time
     rng = random.Random(abs(hash(symbol)) % (2**32))
     price = rng.uniform(300, 600)
+    step = TF_SECS.get(tf, 3600)
     now = int(time.time())
     out = []
     for i in range(bars):
@@ -85,25 +104,24 @@ def _synth_ohlc(symbol: str, bars: int = 150) -> List[dict]:
         c = price
         h = max(o, c) * (1 + abs(rng.gauss(0, 0.002)))
         l = min(o, c) * (1 - abs(rng.gauss(0, 0.002)))
-        out.append({"time": now - (bars - i) * 3600, "open": round(o, 2),
+        out.append({"time": now - (bars - i) * step, "open": round(o, 2),
                     "high": round(h, 2), "low": round(l, 2), "close": round(c, 2)})
     return out
 
 
-def get_ohlc(instrument: str, provider, bars: int = 150):
-    """Returns (ohlc_list, source_label). Tries the correct-scale Yahoo futures
-    first; if that's blocked/empty, falls back to Alpaca's ETF for indices so the
-    charts still render."""
+def get_ohlc(instrument: str, provider, bars: int = 150, tf: str = "1h"):
+    """Returns (ohlc_list, source_label) at the requested timeframe. Tries the
+    correct-scale Yahoo futures first; falls back to Alpaca ETF for indices."""
     sym = DATA_MAP.get(instrument)
     if not sym:
         return [], None
     name = getattr(provider, "name", "")
     if name == "mock":
-        return _synth_ohlc(sym, bars), "synthetic"
+        return _synth_ohlc(sym, bars, tf), "synthetic"
 
     # 1) preferred: Yahoo futures (correct trading scale)
     try:
-        data = _yf_ohlc(sym, bars)
+        data = _yf_ohlc(sym, bars, tf)
     except Exception:
         data = []
     if data:
@@ -113,7 +131,7 @@ def get_ohlc(instrument: str, provider, bars: int = 150):
     etf = ALPACA_ETF.get(instrument)
     if etf and name == "alpaca":
         try:
-            d2 = _alpaca_ohlc(provider, etf, bars)
+            d2 = _alpaca_ohlc(provider, etf, bars, tf)
             if d2:
                 return d2, f"ETF {etf} (Alpaca fallback — ETF price scale)"
         except Exception:
@@ -168,9 +186,9 @@ def detect_signals(ohlc: List[dict], lookback: int = 20, buffer_atr: float = 0.1
     return {"last": last, "fresh": bool(last and last["i"] == n - 1), "count": len(sigs)}
 
 
-def build_signals(instrument: str, provider, bars: int = 150) -> dict:
-    ohlc, source = get_ohlc(instrument, provider, bars)
+def build_signals(instrument: str, provider, bars: int = 150, tf: str = "1h") -> dict:
+    ohlc, source = get_ohlc(instrument, provider, bars, tf)
     det = detect_signals(ohlc)
-    return {"instrument": instrument, "ohlc": ohlc, "source": source, "signal": det,
-            "disclaimer": "Rules-based 1H sweep-reclaim levels. Decision-support, "
+    return {"instrument": instrument, "tf": tf, "ohlc": ohlc, "source": source, "signal": det,
+            "disclaimer": f"Rules-based {tf} sweep-reclaim levels. Decision-support, "
                           "not a validated edge and not financial advice."}

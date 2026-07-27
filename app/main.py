@@ -165,15 +165,15 @@ _sig_cache: dict = {}
 
 
 @app.get("/api/signals")
-def api_signals(instrument: str = "US100", refresh: bool = False):
-    key = instrument.upper()
+def api_signals(instrument: str = "US100", tf: str = "1h", refresh: bool = False):
+    key = f"{instrument.upper()}:{tf}"
     entry = _sig_cache.get(key)
     now = time.time()
-    if refresh or not entry or now - entry["ts"] > 300:
+    if refresh or not entry or now - entry["ts"] > 30:
         try:
-            data = signals_mod.build_signals(key, PROVIDER)
+            data = signals_mod.build_signals(instrument.upper(), PROVIDER, tf=tf)
         except Exception as e:
-            return {"error": str(e), "instrument": key, "ohlc": [], "signal": {}}
+            return {"error": str(e), "instrument": instrument.upper(), "tf": tf, "ohlc": [], "signal": {}}
         _sig_cache[key] = {"ts": now, "data": data}
     out = dict(_sig_cache[key]["data"])
     out["timestamp"] = _sig_cache[key]["ts"]

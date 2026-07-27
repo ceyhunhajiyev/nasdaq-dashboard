@@ -22,6 +22,9 @@
   .spacer{flex:1}
   .updated{font-family:var(--mono); font-size:11px; color:var(--ink-faint)}
   select,button{font-family:var(--disp); font-weight:600; font-size:13px; color:var(--ink); background:var(--panel-2); border:1px solid var(--line); border-radius:8px; padding:7px 12px; cursor:pointer}
+  .tfbar{display:inline-flex; gap:4px}
+  .tfbtn{font-family:var(--mono); font-size:11px; padding:6px 10px; background:transparent; border:1px solid var(--line); border-radius:6px; color:var(--ink-faint); cursor:pointer}
+  .tfbtn:hover{color:var(--ink)} .tfbtn.act{background:var(--steel); color:#06110d; border-color:var(--steel)}
   main{max-width:1200px; margin:0 auto; padding:22px}
   .eyebrow{font-family:var(--mono); font-size:11px; letter-spacing:.16em; text-transform:uppercase; color:var(--ink-faint); margin:0 0 10px}
   .instrument-title{font-size:22px; font-weight:700; margin:0 0 12px} .instrument-title span{color:var(--ink-faint); font-family:var(--mono); font-size:13px; font-weight:400}
@@ -50,6 +53,7 @@
   <a href="/" class="navlink">← Internals</a>
   <a href="/metals" class="navlink">Metals</a>
   <div class="spacer"></div>
+  <span class="tfbar" id="tfbar"></span>
   <select id="inst">
     <option value="US100">US100 · Nasdaq-100</option>
     <option value="SP500">SP500 · S&amp;P 500</option>
@@ -108,12 +112,19 @@ function clearLines(){ priceLines.forEach(l=>series.removePriceLine(l)); priceLi
 function addLine(price,color,title){ if(price==null) return; priceLines.push(series.createPriceLine({price, color, lineWidth:2, lineStyle:2, axisLabelVisible:true, title})); }
 function ago(ts){ const s=Math.max(0,Math.round(Date.now()/1000-ts)); return s<60?`${s}s ago`:s<3600?`${Math.round(s/60)}m ago`:`${Math.round(s/3600)}h ago`; }
 
+const TFS=['1m','5m','15m','1h','4h','1d'];
+let curTf='1h';
+function buildTFBar(){
+  $('tfbar').innerHTML=TFS.map(t=>`<button class="tfbtn${t===curTf?' act':''}" data-tf="${t}">${t.toUpperCase()}</button>`).join('');
+  $('tfbar').querySelectorAll('.tfbtn').forEach(b=>b.onclick=()=>{ curTf=b.dataset.tf; $('tfbar').querySelectorAll('.tfbtn').forEach(x=>x.classList.remove('act')); b.classList.add('act'); load(false); });
+}
+
 async function load(refresh=false){
   const inst=$('inst').value; const meta=INSTRUMENTS[inst];
-  $('title').innerHTML=`${meta.label} <span>· ${meta.name} · 1H · levels from ${meta.src}</span>`;
-  $('sigCap').textContent='Signal chart · '+meta.label+' 1H · '+meta.src;
+  $('title').innerHTML=`${meta.label} <span>· ${meta.name} · ${curTf.toUpperCase()} · levels from ${meta.src}</span>`;
+  $('sigCap').textContent='Signal chart · '+meta.label+' '+curTf.toUpperCase()+' · '+meta.src;
   try{
-    const r=await fetch('/api/signals?instrument='+inst+(refresh?'&refresh=true':''));
+    const r=await fetch('/api/signals?instrument='+inst+'&tf='+curTf+(refresh?'&refresh=true':''));
     const d=await r.json();
     if(d.error){ $('chartState').style.display='block'; $('chartState').textContent='No data — '+d.error; return; }
     const ohlc=d.ohlc||[];
@@ -144,8 +155,8 @@ async function load(refresh=false){
 }
 $('refresh').onclick=()=>load(true);
 $('inst').onchange=()=>{ load(false); };
-initChart(); load(false);
-setInterval(()=>load(false), 3600000);
+buildTFBar(); initChart(); load(false);
+setInterval(()=>load(false), 30000);
 </script>
 </body>
 </html>
