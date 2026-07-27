@@ -28,6 +28,11 @@ DATA_MAP = {
     "XCU":   "HG=F",  # Copper
 }
 
+# Alpaca ETF equivalents for the indices — used as a FALLBACK when Yahoo is
+# unreachable (e.g. a corporate network blocks it). ETF price scale differs from
+# the futures scale, so this is for keeping charts alive, not for exact levels.
+ALPACA_ETF = {"US100": "QQQ", "SP500": "SPY", "US30": "DIA"}
+
 
 # ============================ OHLC SOURCES =================================
 def _alpaca_ohlc(provider, symbol: str, bars: int) -> List[dict]:
@@ -48,13 +53,19 @@ def _alpaca_ohlc(provider, symbol: str, bars: int) -> List[dict]:
 
 def _yf_ohlc(symbol: str, bars: int) -> List[dict]:
     import yfinance as yf
+    import pandas as pd
     df = yf.download(symbol, period="30d", interval="1h", progress=False, auto_adjust=False)
     if df is None or df.empty:
         return []
+    # newer yfinance returns multi-index columns like ('Open','NQ=F'); flatten to field name
+    if isinstance(df.columns, pd.MultiIndex):
+        df = df.copy()
+        df.columns = df.columns.get_level_values(0)
+    df = df.loc[:, ~df.columns.duplicated()]
     out = []
     for idx, row in df.tail(bars).iterrows():
         try:
-            ts = int(idx.timestamp())
+            ts = int(pd.Timestamp(idx).timestamp())
             out.append({"time": ts, "open": float(row["Open"]), "high": float(row["High"]),
                         "low": float(row["Low"]), "close": float(row["Close"])})
         except Exception:
@@ -79,16 +90,35 @@ def _synth_ohlc(symbol: str, bars: int = 150) -> List[dict]:
     return out
 
 
-def get_ohlc(instrument: str, provider, bars: int = 150) -> List[dict]:
+def get_ohlc(instrument: str, provider, bars: int = 150):
+    """Returns (ohlc_list, source_label). Tries the correct-scale Yahoo futures
+    first; if that's blocked/empty, falls back to Alpaca's ETF for indices so the
+    charts still render."""
     sym = DATA_MAP.get(instrument)
     if not sym:
-        return []
+        return [], None
+    name = getattr(provider, "name", "")
+    if name == "mock":
+        return _synth_ohlc(sym, bars), "synthetic"
+
+    # 1) preferred: Yahoo futures (correct trading scale)
     try:
-        if getattr(provider, "name", "") == "mock":
-            return _synth_ohlc(sym, bars)
-        return _yf_ohlc(sym, bars)
+        data = _yf_ohlc(sym, bars)
     except Exception:
-        return []
+        data = []
+    if data:
+        return data, f"futures {sym}"
+
+    # 2) fallback: Alpaca ETF for indices (works when Yahoo is blocked)
+    etf = ALPACA_ETF.get(instrument)
+    if etf and name == "alpaca":
+        try:
+            d2 = _alpaca_ohlc(provider, etf, bars)
+            if d2:
+                return d2, f"ETF {etf} (Alpaca fallback — ETF price scale)"
+        except Exception:
+            pass
+    return [], None
 
 
 # ============================ SIGNAL LOGIC =================================
@@ -139,8 +169,8 @@ def detect_signals(ohlc: List[dict], lookback: int = 20, buffer_atr: float = 0.1
 
 
 def build_signals(instrument: str, provider, bars: int = 150) -> dict:
-    ohlc = get_ohlc(instrument, provider, bars)
+    ohlc, source = get_ohlc(instrument, provider, bars)
     det = detect_signals(ohlc)
-    return {"instrument": instrument, "ohlc": ohlc, "signal": det,
+    return {"instrument": instrument, "ohlc": ohlc, "source": source, "signal": det,
             "disclaimer": "Rules-based 1H sweep-reclaim levels. Decision-support, "
                           "not a validated edge and not financial advice."}

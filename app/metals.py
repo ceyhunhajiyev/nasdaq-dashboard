@@ -20,24 +20,30 @@ METALS = {
 }
 
 
-def _fetch_all_closes(days: int = 220) -> Dict[str, List[float]]:
-    """Batched daily closes for the three metals. Empty list on failure."""
+def _yf_closes_single(symbol: str, days: int) -> List[float]:
     import yfinance as yf
-    syms = [m["yf"] for m in METALS.values()]
-    out: Dict[str, List[float]] = {k: [] for k in METALS}
+    import pandas as pd
     try:
-        data = yf.download(" ".join(syms), period=f"{days}d", interval="1d",
-                           group_by="ticker", progress=False, auto_adjust=False,
-                           threads=True)
+        df = yf.download(symbol, period=f"{days}d", interval="1d",
+                         progress=False, auto_adjust=False)
     except Exception:
-        return out
-    for k, meta in METALS.items():
-        try:
-            df = data[meta["yf"]].dropna()
-            out[k] = [float(x) for x in df["Close"].tolist()]
-        except Exception:
-            out[k] = []
-    return out
+        return []
+    if df is None or df.empty:
+        return []
+    if isinstance(df.columns, pd.MultiIndex):
+        df = df.copy()
+        df.columns = df.columns.get_level_values(0)
+    df = df.loc[:, ~df.columns.duplicated()]
+    try:
+        return [float(x) for x in df["Close"].dropna().tolist()]
+    except Exception:
+        return []
+
+
+def _fetch_all_closes(days: int = 220) -> Dict[str, List[float]]:
+    """Daily closes for the three metals (per-symbol; robust to yfinance column
+    format differences). Empty list on failure."""
+    return {k: _yf_closes_single(meta["yf"], days) for k, meta in METALS.items()}
 
 
 def compute_smt(closes_by_metal: Dict[str, List[float]], L: int = 10) -> dict:
