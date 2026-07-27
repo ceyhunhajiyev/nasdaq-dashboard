@@ -151,7 +151,7 @@
 
 <main>
   <!-- live charts -->
-  <p class="eyebrow">Live index charts</p>
+  <p class="eyebrow" style="display:flex;align-items:center;gap:10px">Live index charts &mdash; synced <span class="tfbtns" id="idxTf" style="margin-left:auto"></span></p>
   <section class="charts" id="charts"></section>
 
   <div class="state" id="state">Loading market internals…</div>
@@ -256,9 +256,20 @@ const CHARTS=[
   {id:'lc_us30',  inst:'US30',  title:'US30 · Dow'},
 ];
 const TFS=['1m','5m','15m','1h','4h','1d'];
-const chartState={};
+let idxTf='1h';
+const idxCharts=[];      // {chart, s, inst, dataMap}
+let syncing=false;
+
+function buildTfBar(){
+  $('idxTf').innerHTML=TFS.map(t=>`<button class="tfbtn${t===idxTf?' act':''}" data-tf="${t}">${t.toUpperCase()}</button>`).join('');
+  $('idxTf').querySelectorAll('.tfbtn').forEach(b=>b.onclick=()=>{
+    idxTf=b.dataset.tf;
+    $('idxTf').querySelectorAll('.tfbtn').forEach(x=>x.classList.remove('act')); b.classList.add('act');
+    updateCharts();
+  });
+}
 function buildCharts(){
-  $('charts').innerHTML=CHARTS.map(c=>`<div class="chartbox"><div class="cap">${c.title}<span class="tfbtns" data-inst="${c.inst}">${TFS.map(t=>`<button class="tfbtn" data-tf="${t}">${t.toUpperCase()}</button>`).join('')}</span></div><div class="tvwrap" id="${c.id}"></div></div>`).join('');
+  $('charts').innerHTML=CHARTS.map(c=>`<div class="chartbox"><div class="cap">${c.title}</div><div class="tvwrap" id="${c.id}"></div></div>`).join('');
   if(!window.LightweightCharts) return;
   CHARTS.forEach(c=>{
     const el=$(c.id);
@@ -268,26 +279,48 @@ function buildCharts(){
       rightPriceScale:{borderColor:'#26313f'},timeScale:{borderColor:'#26313f',timeVisible:true,secondsVisible:false},
       crosshair:{mode:0}});
     const s=chart.addCandlestickSeries({upColor:'#3fb98f',downColor:'#e5654b',borderVisible:false,wickUpColor:'#3fb98f',wickDownColor:'#e5654b'});
-    chartState[c.inst]={chart,s,tf:'1h'};
+    idxCharts.push({chart,s,inst:c.inst,el,dataMap:new Map()});
     window.addEventListener('resize',()=>chart.applyOptions({width:el.clientWidth}));
   });
-  document.querySelectorAll('.tfbtns').forEach(grp=>{
-    const inst=grp.dataset.inst;
-    grp.querySelectorAll('.tfbtn').forEach(b=>{
-      if(b.dataset.tf===chartState[inst].tf) b.classList.add('act');
-      b.onclick=()=>{ chartState[inst].tf=b.dataset.tf; grp.querySelectorAll('.tfbtn').forEach(x=>x.classList.remove('act')); b.classList.add('act'); loadChart(inst); };
+  // --- sync zoom / pan across the three charts (index-aligned logical range) ---
+  idxCharts.forEach(src=>{
+    src.chart.timeScale().subscribeVisibleLogicalRangeChange(range=>{
+      if(syncing||!range) return;
+      syncing=true;
+      idxCharts.forEach(dst=>{ if(dst!==src) dst.chart.timeScale().setVisibleLogicalRange(range); });
+      syncing=false;
+    });
+  });
+  // --- sync crosshair (hovering one shows the same time on all three) ---
+  idxCharts.forEach(src=>{
+    src.chart.subscribeCrosshairMove(param=>{
+      if(syncing) return;
+      syncing=true;
+      idxCharts.forEach(dst=>{
+        if(dst===src) return;
+        if(param.time && dst.dataMap.has(param.time)){
+          dst.chart.setCrosshairPosition(dst.dataMap.get(param.time), param.time, dst.s);
+        } else {
+          dst.chart.clearCrosshairPosition();
+        }
+      });
+      syncing=false;
     });
   });
   updateCharts();
 }
-async function loadChart(inst){
-  const st=chartState[inst]; if(!st) return;
-  try{
-    const r=await fetch(`/api/signals?instrument=${inst}&tf=${st.tf}`); const d=await r.json();
-    if(d.ohlc&&d.ohlc.length){ st.s.setData(d.ohlc); st.chart.timeScale().fitContent(); }
-  }catch(e){}
+async function updateCharts(){
+  for(const c of idxCharts){
+    try{
+      const r=await fetch(`/api/signals?instrument=${c.inst}&tf=${idxTf}`); const d=await r.json();
+      if(d.ohlc&&d.ohlc.length){
+        c.s.setData(d.ohlc);
+        c.dataMap=new Map(d.ohlc.map(b=>[b.time, b.close]));
+      }
+    }catch(e){}
+  }
+  if(idxCharts[0]) idxCharts[0].chart.timeScale().fitContent();  // sync applies to the rest
 }
-function updateCharts(){ CHARTS.forEach(c=>loadChart(c.inst)); }
 
 // ---- helpers ----
 function fmtPct(v){ if(v==null) return '—'; return (v>=0?'+':'')+v.toFixed(2)+'%'; }
@@ -420,6 +453,7 @@ $('refresh').onclick=()=>{load(true); loadNews(); updateCharts();};
 $('auto').onchange=schedule;
 $('hiOnly').onchange=loadNews;
 
+buildTfBar();
 buildCharts();
 load(false); loadNews(); schedule();
 setInterval(loadNews, 120000); // news every 2 min
