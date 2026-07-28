@@ -19,6 +19,8 @@
   body{background:var(--bg); color:var(--ink); font-family:var(--disp); padding:0 0 48px; -webkit-font-smoothing:antialiased}
   a{color:var(--steel); text-decoration:none}
   header{display:flex; align-items:center; gap:16px; flex-wrap:wrap; padding:14px 22px; border-bottom:1px solid var(--line); background:linear-gradient(180deg,#121a24,#0e141c); position:sticky; top:0; z-index:10}
+  .hgroup{display:flex; align-items:center; gap:12px; flex-wrap:wrap}
+  header .theme-toggle{order:99; margin-left:4px}
   .brand{font-weight:700; letter-spacing:.14em; font-size:14px} .brand b{color:var(--amber)}
   .navlink{font-family:var(--mono); font-size:11px; letter-spacing:.06em; color:var(--steel); border:1px solid var(--line); border-radius:999px; padding:3px 10px; text-transform:uppercase}
   .spacer{flex:1}
@@ -70,22 +72,30 @@
 </head>
 <body>
 <header>
-  <div class="brand">SIGNALS <b>1H</b></div>
-  <a href="/" class="navlink">← Internals</a>
-  <a href="/metals" class="navlink">Metals</a>
-  <a href="/journal" class="navlink">Journal</a>
+  <div class="hgroup">
+    <div class="brand">SIGNALS <b>1H</b></div>
+    <a href="/" class="navlink">← Internals</a>
+    <a href="/metals" class="navlink">Metals</a>
+    <a href="/journal" class="navlink">Journal</a>
+  </div>
   <div class="spacer"></div>
-  <span class="tfbar" id="tfbar"></span>
-  <select id="inst">
-    <option value="US100">US100 · Nasdaq-100</option>
-    <option value="SP500">SP500 · S&amp;P 500</option>
-    <option value="US30">US30 · Dow</option>
-    <option value="XAU">XAU · Gold</option>
-    <option value="XAG">XAG · Silver</option>
-    <option value="XCU">XCU · Copper</option>
-  </select>
-  <div class="updated" id="updated">—</div>
-  <button id="refresh">Refresh</button>
+  <div class="hgroup">
+    <span class="tfbar" id="tfbar"></span>
+    <select id="strategy" title="Trading strategy">
+      <option value="sweep">Sweep-Reclaim</option>
+      <option value="orb">Opening Range Breakout</option>
+    </select>
+    <select id="inst">
+      <option value="US100">US100 · Nasdaq-100</option>
+      <option value="SP500">SP500 · S&amp;P 500</option>
+      <option value="US30">US30 · Dow</option>
+      <option value="XAU">XAU · Gold</option>
+      <option value="XAG">XAG · Silver</option>
+      <option value="XCU">XCU · Copper</option>
+    </select>
+    <span class="updated" id="updated">—</span>
+    <button id="refresh">Refresh</button>
+  </div>
 </header>
 
 <main>
@@ -153,6 +163,7 @@ function ago(ts){ const s=Math.max(0,Math.round(Date.now()/1000-ts)); return s<6
 
 const TFS=['1m','5m','15m','1h','4h','1d'];
 let curTf='1h';
+let curStrategy='sweep';
 let lastSig=null, lastConv=null, chartSrc='', lastView='';
 function buildTFBar(){
   $('tfbar').innerHTML=TFS.map(t=>`<button class="tfbtn${t===curTf?' act':''}" data-tf="${t}">${t.toUpperCase()}</button>`).join('');
@@ -164,7 +175,7 @@ async function load(refresh=false){
   $('title').innerHTML=`${meta.label} <span>· ${meta.name} · ${curTf.toUpperCase()} · levels from ${meta.src}</span>`;
   $('sigCap').textContent='Signal chart · '+meta.label+' '+curTf.toUpperCase()+' · '+meta.src;
   try{
-    const r=await fetch('/api/signals?instrument='+inst+'&tf='+curTf+(refresh?'&refresh=true':''));
+    const r=await fetch('/api/signals?instrument='+inst+'&tf='+curTf+'&strategy='+curStrategy+(refresh?'&refresh=true':''));
     const d=await r.json();
     if(d.error){ $('chartState').style.display='block'; $('chartState').textContent='No data — '+d.error; return; }
     const ohlc=d.ohlc||[];
@@ -182,15 +193,20 @@ async function load(refresh=false){
       addLine(sig.tp1,'#3fb98f','TP1'); addLine(sig.tp2,'#3fb98f','TP2');
       series.setMarkers([{time:sig.time, position:sig.signal==='long'?'belowBar':'aboveBar', color:sig.signal==='long'?'#3fb98f':'#e5654b', shape:sig.signal==='long'?'arrowUp':'arrowDown', text:sig.signal.toUpperCase()}]);
       const b=$('sigBadge'); b.textContent=sig.signal.toUpperCase(); b.className='badge '+(sig.signal==='long'?'b-long':'b-short');
-      // trend-alignment badge (the backtested edge: aligned good, counter-trend lost)
-      const ab=$('alignBadge'); ab.style.display='inline-block';
-      if(sig.trend==='neutral'){ ab.textContent='no clear trend'; ab.className='badge align-neutral'; }
-      else if(sig.aligned){ ab.textContent='✓ trend-aligned'; ab.className='badge align-ok'; }
-      else { ab.textContent='⚠ counter-trend'; ab.className='badge align-warn'; }
-      // validation note for this instrument/timeframe
-      const vn=$('validNote'); vn.style.display='block';
-      if(d.validated){ vn.className='validnote v-ok'; vn.textContent='Backtest: on this instrument/timeframe, trend-aligned setups showed a positive out-of-sample edge after costs. Promising — trade small and track it, not guaranteed.'; }
-      else { vn.className='validnote v-caution'; vn.textContent='Not among the backtest-positive combos. Strongest evidence was on 15M for US100/US30/XAU/XAG, trend-aligned only. Treat setups here with extra caution.'; }
+      const ab=$('alignBadge'); const vn=$('validNote'); vn.style.display='block';
+      if(curStrategy==='orb'){
+        // ORB isn't defined by trend alignment and isn't validated yet
+        ab.style.display='none';
+        vn.className='validnote v-caution';
+        vn.textContent='Opening Range Breakout — exploratory. Not yet backtested, so no edge is claimed. Designed for index NY opens (US100/US30/SP500); metals have no clean open. Log manually if you want to track it.';
+      } else {
+        ab.style.display='inline-block';
+        if(sig.trend==='neutral'){ ab.textContent='no clear trend'; ab.className='badge align-neutral'; }
+        else if(sig.aligned){ ab.textContent='✓ trend-aligned'; ab.className='badge align-ok'; }
+        else { ab.textContent='⚠ counter-trend'; ab.className='badge align-warn'; }
+        if(d.validated){ vn.className='validnote v-ok'; vn.textContent='Backtest: on this instrument/timeframe, trend-aligned setups showed a positive out-of-sample edge after costs. Promising — trade small and track it, not guaranteed.'; }
+        else { vn.className='validnote v-caution'; vn.textContent='Not among the backtest-positive combos. Strongest evidence was on 15M for US100/US30/XAU/XAG, trend-aligned only. Treat setups here with extra caution.'; }
+      }
       $('levels').innerHTML=
         `<div class="lvl"><span class="k">Entry</span><span class="v entry">${sig.entry}</span></div>`+
         `<div class="lvl"><span class="k">Stop loss</span><span class="v sl">${sig.sl}</span></div>`+
@@ -211,9 +227,17 @@ async function load(refresh=false){
 }
 $('refresh').onclick=()=>{load(true); loadConviction();};
 $('inst').onchange=()=>{ load(false); loadConviction(); };
+$('strategy').onchange=()=>{ curStrategy=$('strategy').value; lastView=''; load(false); loadConviction(); };
 
 async function loadConviction(){
   const inst=$('inst').value;
+  if(curStrategy==='orb'){
+    $('convGrade').textContent='—'; $('convGrade').className='conv-grade grade-none';
+    $('convVerdict').textContent='Opening Range Breakout — not yet backtested';
+    $('convStrip').innerHTML='';
+    $('convNote').textContent='ORB has NOT been validated yet — no A/B/C/D grades until it passes the same out-of-sample, cost-adjusted backtest as sweep-reclaim. What you see is the raw rule (15m NY opening range, break of high/low). Treat it as exploratory, not a graded setup. Next step: backtest it.';
+    return;
+  }
   try{
     const r=await fetch('/api/conviction?instrument='+inst); const d=await r.json();
     if(d.error){ $('convVerdict').textContent='Scan unavailable'; return; }
