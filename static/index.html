@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<script src="/static/theme.js"></script>
+<link rel="stylesheet" href="/static/theme.css">
 <title>NDX Internals</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -312,6 +314,7 @@ function buildCharts(){
       crosshair:{mode:0}});
     const s=chart.addCandlestickSeries({upColor:'#3fb98f',downColor:'#e5654b',borderVisible:false,wickUpColor:'#3fb98f',wickDownColor:'#e5654b'});
     idxCharts.push({chart,s,inst:c.inst,el,dataMap:new Map()});
+    applyChartTheme(chart);
     window.addEventListener('resize',()=>chart.applyOptions({width:el.clientWidth}));
   });
   // --- sync zoom / pan across the three charts (index-aligned logical range) ---
@@ -530,6 +533,7 @@ load(false); loadNews(); loadCalendar(); schedule();
 setInterval(loadNews, 120000); // news every 2 min
 setInterval(loadCalendar, 300000); // calendar every 5 min
 loopCharts(); // charts: 2s on MT5 (live), 15s on Yahoo (safe)
+window.addEventListener('themechange',()=>idxCharts.forEach(c=>applyChartTheme(c.chart)));
 </script>
 </body>
 </html>

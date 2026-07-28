@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<script src="/static/theme.js"></script>
+<link rel="stylesheet" href="/static/theme.css">
 <title>Signals</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -140,6 +142,8 @@ function initChart(){
     rightPriceScale:{borderColor:'#26313f'}, timeScale:{borderColor:'#26313f', timeVisible:true, secondsVisible:false},
     crosshair:{mode:0}});
   series=chart.addCandlestickSeries({upColor:'#3fb98f', downColor:'#e5654b', borderVisible:false, wickUpColor:'#3fb98f', wickDownColor:'#e5654b'});
+  applyChartTheme(chart);
+  window.addEventListener('themechange',()=>applyChartTheme(chart));
   window.addEventListener('resize',()=>chart.applyOptions({width:el.clientWidth}));
 }
 function buildTV(sym){ /* TradingView widget removed — charts are now self-hosted Lightweight Charts */ }

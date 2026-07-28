@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<script src="/static/theme.js"></script>
+<link rel="stylesheet" href="/static/theme.css">
 <title>Trade Journal</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -46,6 +48,7 @@
   <a href="/" class="navlink">← Internals</a>
   <a href="/signals" class="navlink">Signals</a>
   <div class="spacer"></div>
+  <label style="font-family:var(--mono);font-size:11px;color:var(--ink-dim);display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" id="autolog"> auto-log A/B setups</label>
   <div style="font-family:var(--mono);font-size:11px;color:var(--ink-faint)" id="updated"></div>
 </header>
 <main>
@@ -66,6 +69,7 @@ function when(ts){ try{ return new Date(ts*1000).toLocaleString([], {month:'shor
 async function load(){
   const r=await fetch('/api/journal'); const d=await r.json();
   const s=d.stats||{}; const bg=s.by_grade||{};
+  $('autolog').checked = !!d.autolog;
   const o=s.overall||{};
   const cards=[
     {lab:'Closed trades', big:o.n||0, sub:(s.open||0)+' still open'},
@@ -85,18 +89,20 @@ async function load(){
         const action=closed
           ? `<span class="${rcls(t.result_R)}">${fmtR(t.result_R)}</span> <button class="x" onclick="del(${t.id})">×</button>`
           : `<button class="b-sl" onclick="close_(${t.id},'sl')">SL</button><button onclick="close_(${t.id},'be')">BE</button><button class="b-tp" onclick="close_(${t.id},'tp1')">TP1</button><button class="b-tp" onclick="close_(${t.id},'tp2')">TP2</button>`;
-        return `<tr><td>${when(t.ts_open)}</td><td>${t.instrument}</td><td>${(t.tf||'').toUpperCase()}</td>`+
+        return `<tr><td>${when(t.ts_open)}${t.auto?' <span style="color:var(--steel);font-family:var(--mono);font-size:9px">AUTO</span>':''}</td><td>${t.instrument}</td><td>${(t.tf||'').toUpperCase()}</td>`+
           `<td><span class="gb g${t.grade}">${t.grade}</span></td><td class="dir-${t.direction}">${(t.direction||'').toUpperCase()}</td>`+
           `<td>${t.entry??'—'}</td><td>${t.sl??'—'}</td><td>${t.tp2??'—'}</td>`+
           `<td>${closed?'':'<span style="color:var(--ink-faint)">open</span>'}</td><td>${action}</td></tr>`;
       }).join('')+'</table>';
   }
-  $('note').innerHTML='Compare your <b>live Grade-A avg R</b> to the backtest hint (~+0.25R). If your live results hold up over 30-50 trades, the edge is real for you; if not, believe your live results over the backtest. Grades C/D should stay weak — if they do not, the grading needs revisiting. This is your record, not advice.';
+  $('note').innerHTML='<b>Automation:</b> the app auto-logs fresh A/B setups (15M/4H) and auto-resolves them at SL or TP2 (stop-first, in the background every ~60s) — so you never miss an entry or outcome. It tracks what the <b>system</b> would have done, not your live account fills. Compare your live Grade-A avg R to the backtest hint (~+0.25R) over 30-50 trades; if it holds, the edge is real for you — if not, believe your live results. Not advice.';
   $('updated').textContent='updated '+new Date().toLocaleTimeString();
 }
+$('autolog').onchange=async (e)=>{ await fetch('/api/journal/autolog',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:e.target.checked})}); };
 async function close_(id, outcome){ await fetch('/api/journal/close',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,outcome})}); load(); }
 async function del(id){ if(confirm('Delete this trade from the log?')){ await fetch('/api/journal/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})}); load(); } }
 load();
+setInterval(load, 30000);
 </script>
 </body>
 </html>

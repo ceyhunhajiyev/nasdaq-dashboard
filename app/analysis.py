@@ -110,6 +110,192 @@ def _macd(vals: List[float]):
     return (macd_series[-1], sig_series[-1])
 
 
+# ==================== EXTRA INDICATORS (for the deep bias) =================
+def _sma(vals, n):
+    return sum(vals[-n:]) / n if len(vals) >= n else None
+
+
+def _roc(closes, n=10):
+    if len(closes) < n + 1 or closes[-1 - n] == 0:
+        return None
+    return (closes[-1] / closes[-1 - n] - 1) * 100
+
+
+def _stochastic(highs, lows, closes, n=14):
+    if len(closes) < n:
+        return None
+    hh = max(highs[-n:]); ll = min(lows[-n:])
+    if hh == ll:
+        return 50.0
+    return (closes[-1] - ll) / (hh - ll) * 100
+
+
+def _williams_r(highs, lows, closes, n=14):
+    if len(closes) < n:
+        return None
+    hh = max(highs[-n:]); ll = min(lows[-n:])
+    if hh == ll:
+        return -50.0
+    return (hh - closes[-1]) / (hh - ll) * -100
+
+
+def _cci(highs, lows, closes, n=20):
+    if len(closes) < n:
+        return None
+    tp = [(highs[i] + lows[i] + closes[i]) / 3 for i in range(len(closes))]
+    sma = _sma(tp, n)
+    mean_dev = sum(abs(x - sma) for x in tp[-n:]) / n
+    if mean_dev == 0:
+        return 0.0
+    return (tp[-1] - sma) / (0.015 * mean_dev)
+
+
+def _bollinger_pctb(closes, n=20, k=2):
+    if len(closes) < n:
+        return None
+    mid = _sma(closes, n)
+    var = sum((c - mid) ** 2 for c in closes[-n:]) / n
+    sd = var ** 0.5
+    if sd == 0:
+        return 0.5
+    upper = mid + k * sd; lower = mid - k * sd
+    return (closes[-1] - lower) / (upper - lower)
+
+
+def _atr_arr(highs, lows, closes, n=14):
+    if len(closes) < n + 1:
+        return None
+    trs = [max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
+           for i in range(1, len(closes))]
+    return sum(trs[-n:]) / n
+
+
+def _tf_lean(closes):
+    """Simple bull/bear lean for a timeframe from EMA alignment + RSI."""
+    if len(closes) < 50:
+        return "neutral"
+    e20 = _ema_last(closes, 20); e50 = _ema_last(closes, 50); c = closes[-1]
+    rsi = _rsi(closes, 14) or 50
+    votes = 0
+    votes += 1 if c > e20 else -1
+    votes += 1 if e20 > e50 else -1
+    votes += 1 if rsi >= 50 else -1
+    return "bull" if votes > 0 else "bear" if votes < 0 else "neutral"
+
+
+def _score_votes(votes):
+    """votes: list of 'bull'/'bear'/'neutral' -> 0..100 or None."""
+    dirs = [v for v in votes if v in ("bull", "bear")]
+    if not dirs:
+        return None
+    s = sum(1 if v == "bull" else -1 for v in dirs)
+    return round((s / len(dirs) + 1) / 2 * 100, 1)
+
+
+def compute_deep_bias(daily_ohlc, closes_4h, closes_1h, breadth, divergence,
+                      last=None, symbol="US100"):
+    """Category-based bias. Indicators are grouped so redundant momentum
+    oscillators can't outvote the independent breadth/multi-timeframe reads.
+    Overall = weighted blend of category sub-scores (independent categories
+    weighted higher). Transparent decision-support — not a trade call."""
+    highs = [b["high"] for b in daily_ohlc]
+    lows = [b["low"] for b in daily_ohlc]
+    closes = [b["close"] for b in daily_ohlc]
+    price = last if last is not None else (closes[-1] if closes else None)
+    cats = []  # {name, weight, score, factors:[{name,signal,detail}]}
+
+    def bull(x):
+        return "bull" if x else "bear"
+
+    # ---- TREND (weight 1.0) ----
+    tf = []
+    if len(closes) >= 20 and price is not None:
+        e20 = _ema_last(closes, 20)
+        tf.append(("Price vs EMA20", bull(price > e20), f"{price:.1f} {'>' if price>e20 else '<'} EMA20 {e20:.1f}"))
+        if len(closes) >= 50:
+            e50 = _ema_last(closes, 50)
+            tf.append(("EMA20 vs EMA50", bull(e20 > e50), f"EMA20 {'>' if e20>e50 else '<'} EMA50 {e50:.1f}"))
+        if len(closes) >= 200:
+            e200 = _ema_last(closes, 200)
+            tf.append(("Price vs EMA200", bull(price > e200), f"{'above' if price>e200 else 'below'} EMA200 {e200:.1f}"))
+        pb = _bollinger_pctb(closes)
+        if pb is not None:
+            tf.append(("Bollinger %B", "bull" if pb > 0.55 else "bear" if pb < 0.45 else "neutral", f"{pb*100:.0f}% of band"))
+    cats.append({"name": "Trend", "weight": 1.0, "factors": [{"name": n, "signal": s, "detail": d} for n, s, d in tf],
+                 "score": _score_votes([s for _, s, _ in tf])})
+
+    # ---- MOMENTUM (weight 0.7 — many but redundant) ----
+    mo = []
+    rsi = _rsi(closes, 14)
+    if rsi is not None:
+        mo.append(("RSI(14)", "bull" if rsi >= 55 else "bear" if rsi <= 45 else "neutral", f"{rsi:.0f}"))
+    macd, sigl = _macd(closes)
+    if macd is not None:
+        mo.append(("MACD", bull(macd > sigl), f"{'above' if macd>sigl else 'below'} signal"))
+    st = _stochastic(highs, lows, closes)
+    if st is not None:
+        mo.append(("Stochastic", "bull" if st > 55 else "bear" if st < 45 else "neutral", f"%K {st:.0f}"))
+    cci = _cci(highs, lows, closes)
+    if cci is not None:
+        mo.append(("CCI(20)", "bull" if cci > 0 else "bear", f"{cci:.0f}"))
+    wr = _williams_r(highs, lows, closes)
+    if wr is not None:
+        mo.append(("Williams %R", "bull" if wr > -50 else "bear", f"{wr:.0f}"))
+    roc = _roc(closes, 10)
+    if roc is not None:
+        mo.append(("ROC(10)", bull(roc > 0), f"{roc:+.1f}%"))
+    r20 = _roc(closes, 20)
+    if r20 is not None:
+        mo.append(("20-bar return", bull(r20 > 0), f"{r20:+.1f}%"))
+    cats.append({"name": "Momentum", "weight": 0.7, "factors": [{"name": n, "signal": s, "detail": d} for n, s, d in mo],
+                 "score": _score_votes([s for _, s, _ in mo])})
+
+    # ---- PARTICIPATION / BREADTH (weight 1.3 — independent) ----
+    br = []
+    if breadth and breadth.get("count", 0) > 0:
+        pa = breadth["pct_advancing"]
+        br.append(("Breadth participation", "bull" if pa >= 55 else "bear" if pa <= 45 else "neutral", f"{pa:.0f}% advancing"))
+        if breadth.get("pct_above_ma20") is not None:
+            pm = breadth["pct_above_ma20"]
+            br.append(("Breadth trend", "bull" if pm >= 55 else "bear" if pm <= 45 else "neutral", f"{pm:.0f}% above 20-MA"))
+    cats.append({"name": "Participation", "weight": 1.3, "factors": [{"name": n, "signal": s, "detail": d} for n, s, d in br],
+                 "score": _score_votes([s for _, s, _ in br])})
+
+    # ---- MULTI-TIMEFRAME (weight 1.3 — independent) ----
+    mt = []
+    dl = _tf_lean(closes); h4 = _tf_lean(closes_4h or []); h1 = _tf_lean(closes_1h or [])
+    mt.append(("Daily trend", dl, dl))
+    mt.append(("4H trend", h4, h4))
+    mt.append(("1H trend", h1, h1))
+    agree = len(set(x for x in [dl, h4, h1] if x != "neutral"))
+    mt_detail = "all timeframes agree" if agree == 1 else "timeframes mixed"
+    cats.append({"name": "Multi-timeframe", "weight": 1.3, "factors": [{"name": n, "signal": s, "detail": d} for n, s, d in mt],
+                 "score": _score_votes([s for _, s, _ in mt]), "note": mt_detail})
+
+    # ---- weighted overall ----
+    scored = [(c["weight"], c["score"]) for c in cats if c["score"] is not None]
+    if scored:
+        overall = round(sum(w * s for w, s in scored) / sum(w for w, _ in scored), 1)
+    else:
+        overall = None
+    label = ("NO DATA" if overall is None else
+             "BULLISH" if overall >= 60 else "BEARISH" if overall <= 40 else "NEUTRAL")
+
+    # context (not scored)
+    context = []
+    atr = _atr_arr(highs, lows, closes)
+    if atr is not None and price:
+        context.append({"name": "Volatility (ATR)", "signal": "neutral", "detail": f"{atr:.1f} (~{atr/price*100:.2f}% of price)"})
+    ds = (divergence or {}).get("state", "")
+    if ds.endswith("divergence"):
+        context.append({"name": "Divergence", "signal": "caution", "detail": (divergence.get("note") or ds).strip()})
+
+    return {"instrument": symbol, "score": overall, "bias": label,
+            "categories": cats, "context": context,
+            "disclaimer": "Category-weighted daily bias (independent breadth & multi-timeframe "
+                          "reads weighted above redundant momentum). Decision-support, not a trade call."}
+
+
 # ============================ TRANSPARENT BIAS =============================
 def compute_index_bias(closes, breadth, divergence, last=None, symbol="US100"):
     factors = []

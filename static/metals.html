@@ -3,6 +3,8 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<script src="/static/theme.js"></script>
+<link rel="stylesheet" href="/static/theme.css">
 <title>Metals + SMT</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -124,6 +126,7 @@ function buildCharts(){
       crosshair:{mode:0}});
     const s=chart.addCandlestickSeries({upColor:'#3fb98f',downColor:'#e5654b',borderVisible:false,wickUpColor:'#3fb98f',wickDownColor:'#e5654b'});
     metCharts.push({chart,s,inst:c.inst,el,dataMap:new Map()});
+    applyChartTheme(chart);
     window.addEventListener('resize',()=>chart.applyOptions({width:el.clientWidth}));
   });
   metCharts.forEach(src=>{
@@ -199,6 +202,7 @@ $('refresh').onclick=()=>{load(true); updateCharts();};
 buildTfBar(); buildCharts(); load(false);
 setInterval(()=>load(false), 60000);
 loopCharts(); // 2s on MT5 (live), 15s on Yahoo (safe)
+window.addEventListener('themechange',()=>metCharts.forEach(c=>applyChartTheme(c.chart)));
 </script>
 </body>
 </html>

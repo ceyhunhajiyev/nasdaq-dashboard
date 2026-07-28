@@ -1,0 +1,17 @@
+/* Light-mode overrides. Higher specificity than :root, so these win when
+   <html data-theme="light"> is set, and dark (the pages' :root) applies otherwise. */
+html[data-theme="light"]{
+  --bg:#eef1f5; --panel:#ffffff; --panel-2:#f4f6f9; --line:#dce2ea;
+  --ink:#1a2230; --ink-dim:#54606f; --ink-faint:#8b95a3;
+  --bull:#159a6e; --bull-dim:#a7e0cc; --bear:#d1442a; --amber:#b9820c;
+  --steel:#3a6f93; --blue:#2f81f7;
+}
+html[data-theme="light"] body{ background:var(--bg); }
+html[data-theme="light"] header{ background:linear-gradient(180deg,#ffffff,#eef1f5) !important; }
+
+.theme-toggle{
+  font-family:var(--mono); font-size:14px; line-height:1; color:var(--ink-dim);
+  background:var(--panel-2); border:1px solid var(--line); border-radius:8px;
+  padding:6px 10px; cursor:pointer; margin-left:8px;
+}
+.theme-toggle:hover{ color:var(--ink); border-color:var(--steel); }

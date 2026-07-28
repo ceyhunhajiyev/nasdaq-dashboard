@@ -7,10 +7,15 @@ are the real judge. This lets you compare live avg-R (per grade) to what the
 backtest suggested, so you find out whether the A/B setups actually pay for YOU.
 Not financial advice.
 """
-import json, time
+import json, time, threading
 from pathlib import Path
 
 JOURNAL_FILE = Path(__file__).resolve().parent.parent / "trades.json"
+_LOCK = threading.Lock()
+
+# instruments/timeframes the auto-scanner watches (only these can grade A or B)
+AUTO_INSTRUMENTS = ["US100", "SP500", "US30", "XAU", "XAG"]
+AUTO_TFS = ["15m", "4h"]
 
 # map quick outcome buttons to R multiples
 OUTCOME_R = {"sl": -1.0, "be": 0.0, "tp1": 1.0, "tp2": 2.0}
@@ -31,35 +36,119 @@ def _save(trades):
 
 
 def add(t: dict) -> dict:
-    trades = _load()
-    tid = (max((x["id"] for x in trades), default=0) + 1)
-    rec = {"id": tid, "ts_open": time.time(), "status": "open",
-           "result_R": None, "ts_close": None,
-           "instrument": t.get("instrument"), "tf": t.get("tf"),
-           "grade": t.get("grade"), "direction": t.get("direction"),
-           "entry": t.get("entry"), "sl": t.get("sl"),
-           "tp1": t.get("tp1"), "tp2": t.get("tp2"), "note": t.get("note", "")}
-    trades.append(rec)
-    _save(trades)
-    return rec
+    with _LOCK:
+        trades = _load()
+        tid = (max((x["id"] for x in trades), default=0) + 1)
+        rec = {"id": tid, "ts_open": time.time(), "status": "open",
+               "result_R": None, "ts_close": None, "auto": bool(t.get("auto")),
+               "bar_time": t.get("bar_time"),
+               "instrument": t.get("instrument"), "tf": t.get("tf"),
+               "grade": t.get("grade"), "direction": t.get("direction"),
+               "entry": t.get("entry"), "sl": t.get("sl"),
+               "tp1": t.get("tp1"), "tp2": t.get("tp2"), "note": t.get("note", "")}
+        trades.append(rec)
+        _save(trades)
+        return rec
+
+
+def _exists(trades, instrument, tf, bar_time, direction) -> bool:
+    return any(x["instrument"] == instrument and x["tf"] == tf
+               and x.get("bar_time") == bar_time and x["direction"] == direction
+               for x in trades)
+
+
+def auto_scan_and_log(provider) -> int:
+    """Scan 15M/4H on the watched instruments; auto-log fresh A/B setups (deduped)."""
+    from . import signals as S
+    added = 0
+    with _LOCK:
+        trades = _load()
+        for inst in AUTO_INSTRUMENTS:
+            for tf in AUTO_TFS:
+                try:
+                    d = S.build_signals(inst, provider, tf=tf)
+                except Exception:
+                    continue
+                det = d["signal"]; sig = det.get("last")
+                if not sig or not det.get("fresh"):
+                    continue
+                grade = S.grade_setup(inst, tf, det, d["validated"])["grade"]
+                if grade not in ("A", "B"):
+                    continue
+                if _exists(trades, inst, tf, sig.get("time"), sig["signal"]):
+                    continue
+                tid = (max((x["id"] for x in trades), default=0) + 1)
+                trades.append({"id": tid, "ts_open": time.time(), "status": "open",
+                               "result_R": None, "ts_close": None, "auto": True,
+                               "bar_time": sig.get("time"), "instrument": inst, "tf": tf,
+                               "grade": grade, "direction": sig["signal"],
+                               "entry": sig["entry"], "sl": sig["sl"],
+                               "tp1": sig["tp1"], "tp2": sig["tp2"], "note": ""})
+                added += 1
+        if added:
+            _save(trades)
+    return added
+
+
+def auto_resolve(provider) -> int:
+    """Close open trades whose SL or TP2 has been hit (stop-first, conservative)."""
+    from . import signals as S
+    resolved = 0
+    with _LOCK:
+        trades = _load()
+        open_t = [t for t in trades if t["status"] == "open"]
+        cache = {}
+        for t in open_t:
+            bt = t.get("bar_time")
+            if bt is None:
+                continue
+            key = (t["instrument"], t["tf"])
+            if key not in cache:
+                try:
+                    cache[key] = S.get_ohlc(t["instrument"], provider, 500, t["tf"])[0]
+                except Exception:
+                    cache[key] = []
+            after = [b for b in cache[key] if b["time"] > bt]
+            long = t["direction"] == "long"
+            outcome = None
+            for b in after:
+                if long:
+                    if b["low"] <= t["sl"]:
+                        outcome = -1.0; break
+                    if b["high"] >= t["tp2"]:
+                        outcome = 2.0; break
+                else:
+                    if b["high"] >= t["sl"]:
+                        outcome = -1.0; break
+                    if b["low"] <= t["tp2"]:
+                        outcome = 2.0; break
+            if outcome is not None:
+                t["status"] = "closed"; t["result_R"] = outcome
+                t["ts_close"] = time.time(); t["auto_closed"] = True
+                resolved += 1
+        if resolved:
+            _save(trades)
+    return resolved
 
 
 def close(tid: int, outcome=None, result_R=None):
-    trades = _load()
-    for t in trades:
-        if t["id"] == tid:
-            if outcome in OUTCOME_R:
-                t["result_R"] = OUTCOME_R[outcome]
-            elif result_R is not None:
-                t["result_R"] = float(result_R)
-            t["status"] = "closed"
-            t["ts_close"] = time.time()
-            break
-    _save(trades)
+    with _LOCK:
+        trades = _load()
+        for t in trades:
+            if t["id"] == tid:
+                if outcome in OUTCOME_R:
+                    t["result_R"] = OUTCOME_R[outcome]
+                elif result_R is not None:
+                    t["result_R"] = float(result_R)
+                t["status"] = "closed"
+                t["ts_close"] = time.time()
+                break
+        _save(trades)
 
 
 def delete(tid: int):
-    _save([t for t in _load() if t["id"] != tid])
+    with _LOCK:
+        _save([t for t in _load() if t["id"] != tid])
 
 
 def _agg(rows):
