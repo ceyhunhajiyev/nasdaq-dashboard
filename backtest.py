@@ -1,20 +1,22 @@
 """
-Backtest the sweep-reclaim rule, NET of costs, WITH a bias/trend filter tested
-OUT-OF-SAMPLE. Same rule your live Signals page uses (app.signals.all_signals).
+Backtest: does the DEEP BIAS filter signals better than the simple TREND filter?
 
-THE FILTER (honest scope):
-  The live bias mixes price factors with breadth/divergence. Breadth comes from a
-  LIVE snapshot with no historical record, so it can't be backtested. What we CAN
-  test is the price/trend core of the bias: only take a signal if it agrees with
-  the trend (long only when price>EMA50 and EMA20>EMA50; short only in the mirror).
-  It's a FIXED rule, not a tuned parameter — little to overfit.
+Compares three ways of taking the sweep-reclaim signal, NET of costs, OUT-OF-SAMPLE:
+  1) unfiltered          - every signal
+  2) trend-filtered      - only signals aligned with EMA20/50 (already validated)
+  3) deep-filtered       - only signals aligned with the price-based DEEP BIAS
+                           (Trend category + Momentum category, weighted 1.0/0.7,
+                           exactly as the live panel weights them)
 
-OUT-OF-SAMPLE:
-  Each series is split in half by time. 'OOS' columns show the filter's result on
-  the LATER half only. A filter that helps in-sample but fails OOS was noise.
+HONEST SCOPE: the deep bias's Breadth (Participation) category CANNOT be
+backtested - there's no historical record of the 99-constituent snapshots. True
+cross-feed multi-timeframe also collapses on a single price series. So this tests
+the PRICE-BASED deep bias (trend + momentum). If deep beats trend out-of-sample,
+the extra indicators earn their keep; if not, the simple trend filter is enough
+and the deep bias is prettier, not more predictive.
 
-Honesty: stop-first within-bar (conservative), costs subtracted per trade in R,
-open trades marked to last close. Validation, not financial advice.
+Conservative (stop-first), costs subtracted per trade in R, causal (no lookahead).
+Validation, not financial advice.
 
 Run:  venv/Scripts/python backtest.py   ->  console table + backtest_report.html
 """
@@ -26,8 +28,6 @@ TFS = ["5m", "15m", "1h", "4h", "1d"]
 EXITS = ["fixed2R", "tp1_be", "time10"]
 BT_PERIOD = {"1m": "7d", "5m": "60d", "15m": "60d", "1h": "730d", "4h": "730d", "1d": "5y"}
 TIME_BARS = 10
-
-# trading costs — EDIT to match your XM account (spread/commission in PRICE units, round-trip)
 COSTS = {
     "US100": {"spread": 1.5,  "commission": 0.0},
     "SP500": {"spread": 0.5,  "commission": 0.0},
@@ -62,36 +62,134 @@ def fetch(instrument, tf):
     return out
 
 
-def _ema_series(closes, period):
-    k = 2 / (period + 1)
-    out, e = [], None
-    for c in closes:
-        e = c if e is None else c * k + e * (1 - k)
-        out.append(e)
+# ----------------------- indicator SERIES (causal) -----------------------
+def _ema_series(v, p):
+    k = 2 / (p + 1); out = []; e = None
+    for x in v:
+        e = x if e is None else x * k + e * (1 - k); out.append(e)
+    return out
+
+
+def _rsi_series(c, n=14):
+    out = [None] * len(c)
+    if len(c) < n + 1:
+        return out
+    g = [max(c[i] - c[i - 1], 0) for i in range(1, len(c))]
+    l = [max(c[i - 1] - c[i], 0) for i in range(1, len(c))]
+    ag = sum(g[:n]) / n; al = sum(l[:n]) / n
+    out[n] = 100 - 100 / (1 + (ag / al if al else 999))
+    for i in range(n + 1, len(c)):
+        ag = (ag * (n - 1) + g[i - 1]) / n; al = (al * (n - 1) + l[i - 1]) / n
+        out[i] = 100 - 100 / (1 + (ag / al if al else 999))
+    return out
+
+
+def _macd_series(c):
+    e12 = _ema_series(c, 12); e26 = _ema_series(c, 26)
+    macd = [a - b for a, b in zip(e12, e26)]
+    return macd, _ema_series(macd, 9)
+
+
+def _stoch_series(h, l, c, n=14):
+    out = [None] * len(c)
+    for i in range(n - 1, len(c)):
+        hh = max(h[i - n + 1:i + 1]); ll = min(l[i - n + 1:i + 1])
+        out[i] = 50.0 if hh == ll else (c[i] - ll) / (hh - ll) * 100
+    return out
+
+
+def _williams_series(h, l, c, n=14):
+    out = [None] * len(c)
+    for i in range(n - 1, len(c)):
+        hh = max(h[i - n + 1:i + 1]); ll = min(l[i - n + 1:i + 1])
+        out[i] = -50.0 if hh == ll else (hh - c[i]) / (hh - ll) * -100
+    return out
+
+
+def _cci_series(h, l, c, n=20):
+    out = [None] * len(c)
+    tp = [(h[i] + l[i] + c[i]) / 3 for i in range(len(c))]
+    for i in range(n - 1, len(c)):
+        sma = sum(tp[i - n + 1:i + 1]) / n
+        md = sum(abs(x - sma) for x in tp[i - n + 1:i + 1]) / n
+        out[i] = 0.0 if md == 0 else (tp[i] - sma) / (0.015 * md)
+    return out
+
+
+def _roc_series(c, n=10):
+    out = [None] * len(c)
+    for i in range(n, len(c)):
+        out[i] = None if c[i - n] == 0 else (c[i] / c[i - n] - 1) * 100
+    return out
+
+
+def _bollinger_series(c, n=20, k=2):
+    out = [None] * len(c)
+    for i in range(n - 1, len(c)):
+        w = c[i - n + 1:i + 1]; mid = sum(w) / n
+        sd = (sum((x - mid) ** 2 for x in w) / n) ** 0.5
+        out[i] = 0.5 if sd == 0 else (c[i] - (mid - k * sd)) / (2 * k * sd)
     return out
 
 
 def trend_dirs(ohlc):
-    """Per-bar trend direction — backtestable core of the bias. Causal (no lookahead)."""
-    closes = [b["close"] for b in ohlc]
-    e20 = _ema_series(closes, 20)
-    e50 = _ema_series(closes, 50)
-    dirs = []
-    for i in range(len(closes)):
+    c = [b["close"] for b in ohlc]
+    e20 = _ema_series(c, 20); e50 = _ema_series(c, 50)
+    d = []
+    for i in range(len(c)):
         if i < 50:
-            dirs.append("neutral"); continue
-        c = closes[i]
-        if c > e50[i] and e20[i] > e50[i]:
-            dirs.append("bull")
-        elif c < e50[i] and e20[i] < e50[i]:
-            dirs.append("bear")
+            d.append("neutral"); continue
+        if c[i] > e50[i] and e20[i] > e50[i]:
+            d.append("bull")
+        elif c[i] < e50[i] and e20[i] < e50[i]:
+            d.append("bear")
         else:
-            dirs.append("neutral")
-    return dirs
+            d.append("neutral")
+    return d
 
 
-def simulate(ohlc, exit_mode, dirs):
-    """Return trades as (gross_R, risk_price, aligned_bool, signal_index)."""
+def deep_dirs(ohlc):
+    """Per-bar direction from the price-based deep bias: Trend (weight 1.0) +
+    Momentum (weight 0.7), same as the live panel. Causal, no lookahead."""
+    h = [b["high"] for b in ohlc]; l = [b["low"] for b in ohlc]; c = [b["close"] for b in ohlc]
+    e20 = _ema_series(c, 20); e50 = _ema_series(c, 50); e200 = _ema_series(c, 200)
+    rsi = _rsi_series(c); macd, sig = _macd_series(c)
+    st = _stoch_series(h, l, c); wr = _williams_series(h, l, c)
+    cci = _cci_series(h, l, c); roc = _roc_series(c); bb = _bollinger_series(c)
+
+    def catmean(votes):
+        nz = [v for v in votes if v != 0]
+        return sum(nz) / len(nz) if nz else 0.0
+
+    out = []
+    for i in range(len(c)):
+        if i < 60:
+            out.append("neutral"); continue
+        tv = [1 if c[i] > e20[i] else -1, 1 if e20[i] > e50[i] else -1]
+        if i >= 200:
+            tv.append(1 if c[i] > e200[i] else -1)
+        if bb[i] is not None:
+            tv.append(1 if bb[i] > 0.55 else -1 if bb[i] < 0.45 else 0)
+        mv = []
+        if rsi[i] is not None:
+            mv.append(1 if rsi[i] >= 55 else -1 if rsi[i] <= 45 else 0)
+        if macd[i] is not None and sig[i] is not None:
+            mv.append(1 if macd[i] > sig[i] else -1)
+        if st[i] is not None:
+            mv.append(1 if st[i] > 55 else -1 if st[i] < 45 else 0)
+        if cci[i] is not None:
+            mv.append(1 if cci[i] > 0 else -1)
+        if wr[i] is not None:
+            mv.append(1 if wr[i] > -50 else -1)
+        if roc[i] is not None:
+            mv.append(1 if roc[i] > 0 else -1)
+        deep = (1.0 * catmean(tv) + 0.7 * catmean(mv)) / 1.7
+        out.append("bull" if deep > 0.15 else "bear" if deep < -0.15 else "neutral")
+    return out
+
+
+def simulate(ohlc, exit_mode, tdirs, ddirs):
+    """trades: (gross_R, risk, trend_aligned, deep_aligned, index)."""
     sigs = S.all_signals(ohlc)
     n = len(ohlc)
     trades = []
@@ -101,14 +199,14 @@ def simulate(ohlc, exit_mode, dirs):
         risk = abs(entry - sl)
         if risk <= 0:
             continue
-        aligned = (long and dirs[i] == "bull") or ((not long) and dirs[i] == "bear")
-        tp1_hit = False
-        outcome = None
+        t_al = (long and tdirs[i] == "bull") or ((not long) and tdirs[i] == "bear")
+        d_al = (long and ddirs[i] == "bull") or ((not long) and ddirs[i] == "bear")
+        tp1_hit = False; outcome = None
         for j in range(i + 1, n):
             b = ohlc[j]
             if long:
-                stop_level = entry if tp1_hit else sl
-                if b["low"] <= stop_level:
+                stop = entry if tp1_hit else sl
+                if b["low"] <= stop:
                     outcome = 0.0 if tp1_hit else -1.0; break
                 if exit_mode == "fixed2R" and b["high"] >= tp2:
                     outcome = 2.0; break
@@ -120,8 +218,8 @@ def simulate(ohlc, exit_mode, dirs):
                 if exit_mode == "time10" and j - i >= TIME_BARS:
                     outcome = (b["close"] - entry) / risk; break
             else:
-                stop_level = entry if tp1_hit else sl
-                if b["high"] >= stop_level:
+                stop = entry if tp1_hit else sl
+                if b["high"] >= stop:
                     outcome = 0.0 if tp1_hit else -1.0; break
                 if exit_mode == "fixed2R" and b["low"] <= tp2:
                     outcome = 2.0; break
@@ -135,98 +233,107 @@ def simulate(ohlc, exit_mode, dirs):
         if outcome is None:
             last = ohlc[-1]["close"]
             outcome = ((last - entry) if long else (entry - last)) / risk
-        trades.append((outcome, risk, aligned, i))
+        trades.append((outcome, risk, t_al, d_al, i))
     return trades
 
 
-def net_R(trades, cost_price):
-    return [g - (cost_price / r if r > 0 else 0.0) for (g, r, *_ ) in trades]
+def net_R(trades, cp):
+    return [g - (cp / r if r > 0 else 0.0) for (g, r, *_ ) in trades]
 
 
-def metrics(rlist):
-    n = len(rlist)
+def metrics(rl):
+    n = len(rl)
     if n == 0:
         return None
-    wins = [o for o in rlist if o > 0]
-    gross_w = sum(wins); gross_l = -sum(o for o in rlist if o < 0)
-    pf = (gross_w / gross_l) if gross_l > 0 else float("inf")
-    return {"trades": n, "win_rate": len(wins) / n, "avg_R": statistics.mean(rlist),
-            "pf": pf, "total_R": sum(rlist)}
+    wins = [o for o in rl if o > 0]
+    gl = -sum(o for o in rl if o < 0)
+    pf = (sum(wins) / gl) if gl > 0 else float("inf")
+    return {"n": n, "avg_R": statistics.mean(rl), "pf": pf, "win": len(wins) / n}
 
 
 def run():
     rows = []
-    print(f"\nBacktest - NET of costs - with TREND filter, tested OUT-OF-SAMPLE\n")
+    print("\nBacktest: DEEP BIAS filter vs TREND filter - net of costs, out-of-sample\n")
     for inst in INSTRUMENTS:
         cost = COSTS.get(inst, {"spread": 0.0, "commission": 0.0})
         cp = cost["spread"] + cost["commission"]
         for tf in TFS:
             ohlc = fetch(inst, tf)
-            if len(ohlc) < 60:
+            if len(ohlc) < 80:
                 print(f"  {inst:5} {tf:4}  thin data ({len(ohlc)}) - skipped"); continue
-            dirs = trend_dirs(ohlc)
-            cutoff = len(ohlc) // 2
+            td = trend_dirs(ohlc); dd = deep_dirs(ohlc)
+            cut = len(ohlc) // 2
             for ex in EXITS:
-                trades = simulate(ohlc, ex, dirs)
-                aligned = [t for t in trades if t[2]]
-                oos = [t for t in aligned if t[3] >= cutoff]
-                m_all = metrics(net_R(trades, cp))
-                m_flt = metrics(net_R(aligned, cp))
-                m_oos = metrics(net_R(oos, cp))
-                if not m_all or not m_flt:
+                tr = simulate(ohlc, ex, td, dd)
+                def oos(sel):
+                    return [t for t in tr if sel(t) and t[4] >= cut]
+                m_all = metrics(net_R(tr, cp))
+                m_tr = metrics(net_R([t for t in tr if t[2]], cp))
+                m_dp = metrics(net_R([t for t in tr if t[3]], cp))
+                o_tr = metrics(net_R(oos(lambda t: t[2]), cp))
+                o_dp = metrics(net_R(oos(lambda t: t[3]), cp))
+                if not m_all:
                     continue
-                passes = (m_flt["avg_R"] > 0 and m_flt["pf"] > 1 and m_oos and m_oos["avg_R"] > 0)
+                deep_wins = (o_dp and o_tr and o_dp["avg_R"] > o_tr["avg_R"] and o_dp["avg_R"] > 0)
                 rows.append({"inst": inst, "tf": tf, "exit": ex,
-                             "all_n": m_all["trades"], "all_R": m_all["avg_R"],
-                             "flt_n": m_flt["trades"], "flt_R": m_flt["avg_R"], "flt_pf": m_flt["pf"],
-                             "oos_n": (m_oos or {}).get("trades", 0), "oos_R": (m_oos or {}).get("avg_R"),
-                             "passes": passes})
-                oosR = f"{m_oos['avg_R']:+.3f}" if m_oos else "   n/a"
-                flag = "PASS" if passes else "    "
-                print(f"  {flag} {inst:5} {tf:4} {ex:8}  unfilt netR={m_all['avg_R']:+.3f}(n={m_all['trades']})"
-                      f"  |  filtered netR={m_flt['avg_R']:+.3f}(n={m_flt['trades']})"
-                      f"  |  OOS netR={oosR}(n={(m_oos or {}).get('trades',0)})")
+                             "all_R": m_all["avg_R"], "all_n": m_all["n"],
+                             "tr_R": (m_tr or {}).get("avg_R"), "tr_oos": (o_tr or {}).get("avg_R"), "tr_oosn": (o_tr or {}).get("n", 0),
+                             "dp_R": (m_dp or {}).get("avg_R"), "dp_oos": (o_dp or {}).get("avg_R"), "dp_oosn": (o_dp or {}).get("n", 0),
+                             "deep_wins": deep_wins})
+                def f(x):
+                    return f"{x:+.3f}" if x is not None else "  n/a"
+                flag = "DEEP>TREND" if deep_wins else "         "
+                print(f"  {flag} {inst:5} {tf:4} {ex:8}  unfilt={f(m_all['avg_R'])}  |  "
+                      f"trend OOS={f((o_tr or {}).get('avg_R'))}(n={(o_tr or {}).get('n',0)})  |  "
+                      f"deep OOS={f((o_dp or {}).get('avg_R'))}(n={(o_dp or {}).get('n',0)})")
     write_html(rows)
-    passed = [r for r in rows if r["passes"]]
-    print(f"\nDone. {len(passed)} of {len(rows)} combos PASS: filter positive AND still positive out-of-sample.")
-    if not passed:
-        print("None survived out-of-sample. Honest read: the trend filter does not rescue the rule -\n"
-              "it mostly just trades less of the same negative edge. That's the #4 answer, with evidence.")
-    else:
-        print("Survivors worth a closer look (check the sample size isn't tiny):")
-        for r in passed:
-            print(f"   {r['inst']} {r['tf']} {r['exit']}: filtered netR={r['flt_R']:+.3f}, OOS netR={r['oos_R']:+.3f}, OOS n={r['oos_n']}")
-    print("\nValidation, not financial advice. A PASS on limited history is a hint, not a guarantee.")
+    # verdict
+    comp = [r for r in rows if r["tr_oos"] is not None and r["dp_oos"] is not None and r["dp_oosn"] >= 20 and r["tr_oosn"] >= 20]
+    deep_better = [r for r in comp if r["dp_oos"] > r["tr_oos"] and r["dp_oos"] > 0]
+    print(f"\nComparable combos (both OOS n>=20): {len(comp)}")
+    print(f"Deep bias beat the trend filter out-of-sample in: {len(deep_better)} of {len(comp)}")
+    if comp:
+        avg_tr = statistics.mean(r["tr_oos"] for r in comp)
+        avg_dp = statistics.mean(r["dp_oos"] for r in comp)
+        print(f"Average OOS avg-R across those combos:  trend={avg_tr:+.3f}   deep={avg_dp:+.3f}")
+        if avg_dp > avg_tr + 0.02 and len(deep_better) > len(comp) * 0.6:
+            print("VERDICT: the deep bias filter improves on the trend filter. The extra indicators earn their keep.")
+        elif avg_dp < avg_tr - 0.02:
+            print("VERDICT: the deep bias filter is WORSE than the simple trend filter. Keep the simple trend filter;\n         the extra indicators add noise, not edge (as warned - momentum is price wearing many hats).")
+        else:
+            print("VERDICT: deep and trend filters are ~equivalent out-of-sample. The deep bias is not measurably\n         better as a FILTER - keep it for the richer read, but the simple trend filter is enough for signals.")
+    print("\nValidation, not financial advice. Breadth (Participation) is excluded - it has no historical record.")
 
 
 def write_html(rows):
     trs = ""
-    for r in sorted(rows, key=lambda x: (not x["passes"], -(x["flt_R"]))):
-        color = "#3fb98f" if r["passes"] else "#e5654b"
-        pf = "inf" if r["flt_pf"] == float("inf") else f"{r['flt_pf']:.2f}"
-        oosR = f"{r['oos_R']:+.3f}" if r["oos_R"] is not None else "n/a"
+    for r in sorted(rows, key=lambda x: (not x["deep_wins"], -((x["dp_oos"] or -9)))):
+        col = "#3fb98f" if r["deep_wins"] else "#8b97a6"
+        def f(x):
+            return f"{x:+.3f}" if x is not None else "n/a"
         trs += (f"<tr><td>{r['inst']}</td><td>{r['tf']}</td><td>{r['exit']}</td>"
-                f"<td style='color:#8b97a6'>{r['all_R']:+.3f}</td><td style='color:#8b97a6'>{r['all_n']}</td>"
-                f"<td style='color:{color}'>{r['flt_R']:+.3f}</td><td>{r['flt_n']}</td><td style='color:{color}'>{pf}</td>"
-                f"<td style='color:{color}'>{oosR}</td><td>{r['oos_n']}</td></tr>")
+                f"<td style='color:#8b97a6'>{f(r['all_R'])}</td>"
+                f"<td>{f(r['tr_oos'])}</td><td>{r['tr_oosn']}</td>"
+                f"<td style='color:{col}'>{f(r['dp_oos'])}</td><td>{r['dp_oosn']}</td>"
+                f"<td style='color:{col}'>{'YES' if r['deep_wins'] else ''}</td></tr>")
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    html = ("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Backtest - bias filter OOS</title>"
+    html = ("<!DOCTYPE html><html><head><meta charset='utf-8'><title>Deep bias vs trend filter</title>"
             "<style>body{background:#0e141c;color:#e8edf2;font-family:system-ui;padding:24px}"
-            "h1{font-size:18px} .note{color:#8b97a6;font-size:13px;max-width:860px;line-height:1.6}"
+            "h1{font-size:18px}.note{color:#8b97a6;font-size:13px;max-width:900px;line-height:1.6}"
             "table{border-collapse:collapse;margin-top:16px;font-family:ui-monospace,monospace;font-size:13px}"
             "th,td{padding:7px 12px;border-bottom:1px solid #26313f;text-align:right}"
             "th{color:#8b97a6;text-transform:uppercase;font-size:10px;letter-spacing:.08em}"
             "td:first-child,td:nth-child(2),td:nth-child(3){text-align:left}</style></head>"
-            "<body><h1>Sweep-reclaim + trend filter - net of costs, out-of-sample &middot; " + stamp + "</h1>"
-            "<p class='note'>Green = trend-filtered rule is positive (avgR&gt;0, PF&gt;1) AND still positive on the "
-            "out-of-sample later half it wasn't judged on. 'Unfilt netR' is the rule without the filter, for comparison. "
-            "The filter tests only the price/trend core of the bias (breadth has no historical record). "
-            "Conservative, costs included. Validation only - not financial advice.</p>"
-            "<table><tr><th>Instr</th><th>TF</th><th>Exit</th><th>Unfilt netR</th><th>n</th>"
-            "<th>Filtered netR</th><th>n</th><th>PF</th><th>OOS netR</th><th>OOS n</th></tr>"
+            "<body><h1>Does the deep bias filter beat the trend filter? &middot; out-of-sample, net of costs &middot; " + stamp + "</h1>"
+            "<p class='note'>Green / YES = the deep-bias filter had higher out-of-sample avg-R than the simple trend filter "
+            "AND was positive. 'Unfilt' is no filter. Only price-based deep bias (Trend+Momentum) is tested - breadth has no "
+            "historical record. If few rows are green, the simple trend filter is enough and the deep bias is a richer read, "
+            "not a better signal filter. Validation only - not financial advice.</p>"
+            "<table><tr><th>Instr</th><th>TF</th><th>Exit</th><th>Unfilt R</th>"
+            "<th>Trend OOS R</th><th>n</th><th>Deep OOS R</th><th>n</th><th>Deep&gt;Trend</th></tr>"
             + trs + "</table></body></html>")
-    with open("backtest_report.html", "w", encoding="utf-8") as f:
-        f.write(html)
+    with open("backtest_report.html", "w", encoding="utf-8") as fp:
+        fp.write(html)
 
 
 if __name__ == "__main__":
