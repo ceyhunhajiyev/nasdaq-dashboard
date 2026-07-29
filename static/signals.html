@@ -198,7 +198,7 @@ async function load(refresh=false){
         // ORB isn't defined by trend alignment and isn't validated yet
         ab.style.display='none';
         vn.className='validnote v-caution';
-        vn.textContent='Opening Range Breakout — exploratory. Not yet backtested, so no edge is claimed. Designed for index NY opens (US100/US30/SP500); metals have no clean open. Log manually if you want to track it.';
+        vn.textContent='ORB — trend-filtered, ATR(14)x1.0 stop, 1R target (the config that held out-of-sample on all 3 indices over 6 months). Take profit at TP1 (1R) — that is the validated exit; TP2 shown for reference only. Still ungraded/exploratory — log manually to track it forward. Index NY opens only.';
       } else {
         ab.style.display='inline-block';
         if(sig.trend==='neutral'){ ab.textContent='no clear trend'; ab.className='badge align-neutral'; }
@@ -235,7 +235,7 @@ async function loadConviction(){
     $('convGrade').textContent='—'; $('convGrade').className='conv-grade grade-none';
     $('convVerdict').textContent='Opening Range Breakout — not yet backtested';
     $('convStrip').innerHTML='';
-    $('convNote').textContent='ORB has NOT been validated yet — no A/B/C/D grades until it passes the same out-of-sample, cost-adjusted backtest as sweep-reclaim. What you see is the raw rule (15m NY opening range, break of high/low). Treat it as exploratory, not a graded setup. Next step: backtest it.';
+    $('convNote').textContent='ORB now runs the best-supported config: trend-filtered, ATR(14)x1.0 stop, 1R target — the ONE variant that held out-of-sample across all three indices in the 6-month test (12 configs tried). Still UNGRADED: promising on ~6 months / ~30 OOS trades each, not proven. Trade the 1R target (tp1); track it forward before trusting. Not financial advice.';
     return;
   }
   try{
@@ -274,7 +274,7 @@ $('logBtn').onclick=async ()=>{
   if(!lastSig) return;
   let grade='—';
   if(lastConv && lastConv.timeframes){ const row=lastConv.timeframes.find(t=>t.tf===curTf); if(row) grade=row.grade; }
-  const payload={instrument:$('inst').value, tf:curTf, grade, direction:lastSig.signal,
+  const payload={instrument:$('inst').value, tf:curTf, grade, strategy:curStrategy, direction:lastSig.signal,
                  bar_time:lastSig.time, entry:lastSig.entry, sl:lastSig.sl, tp1:lastSig.tp1, tp2:lastSig.tp2};
   const b=$('logBtn'); b.textContent='Logging…';
   try{

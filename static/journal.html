@@ -22,7 +22,7 @@
   main{max-width:1200px;margin:0 auto;padding:22px}
   .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-faint);margin:0 0 10px}
   .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px}
-  .stats{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px}
+  .stats{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:20px}
   .stat{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px}
   .stat .lab{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-faint)}
   .stat .big{font-size:24px;font-weight:700;margin-top:6px}
@@ -31,7 +31,7 @@
   th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left}
   th{font-family:var(--mono);font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-faint)}
   .gb{font-family:var(--mono);font-weight:700;padding:2px 8px;border-radius:5px}
-  .gA{background:var(--bull);color:#06110d}.gB{background:var(--steel);color:#06110d}.gC{background:#3a3f2a;color:var(--amber)}.gD{background:#3a2420;color:var(--bear)}
+  .gA{background:var(--bull);color:#06110d}.gB{background:var(--steel);color:#06110d}.gC{background:#3a3f2a;color:var(--amber)}.gD{background:#3a2420;color:var(--bear)}.gORB{background:#20190a;color:var(--amber);border:1px solid #4a3a17}
   .dir-long{color:var(--bull)}.dir-short{color:var(--bear)}
   .res-pos{color:var(--bull);font-weight:600}.res-neg{color:var(--bear);font-weight:600}.res-zero{color:var(--ink-dim)}
   button{font-family:var(--disp);font-weight:600;font-size:12px;color:var(--ink);background:var(--panel-2);border:1px solid var(--line);border-radius:6px;padding:5px 9px;cursor:pointer;margin-right:4px}
@@ -78,7 +78,9 @@ async function load(){
     {lab:'Grade B (live)', big:bg.B&&bg.B.avg_R!=null?fmtR(bg.B.avg_R):'—', sub:'backtest hint '+fmtR(bg.B?bg.B.backtest_hint:null)+' · n='+((bg.B||{}).n||0)},
     {lab:'Grade C/D (live)', big:(()=>{const cd=[bg.C,bg.D].filter(x=>x&&x.n); if(!cd.length)return '—'; const tot=cd.reduce((a,x)=>a+x.avg_R*x.n,0), n=cd.reduce((a,x)=>a+x.n,0); return fmtR(tot/n);})(), sub:'should be weak/negative'},
   ];
-  $('stats').innerHTML=cards.map(c=>`<div class="stat"><div class="lab">${c.lab}</div><div class="big">${c.big}</div><div class="sub">${c.sub}</div></div>`).join('');
+  const orb=s.orb||{};
+  const orbCard=`<div class="stat" style="border-color:#4a3a17"><div class="lab">ORB (forward test)</div><div class="big">${orb.avg_R!=null?fmtR(orb.avg_R):'—'}</div><div class="sub">hint ${fmtR(orb.backtest_hint)} · n=${orb.n||0} · ${orb.open||0} open</div></div>`;
+  $('stats').innerHTML=cards.map(c=>`<div class="stat"><div class="lab">${c.lab}</div><div class="big">${c.big}</div><div class="sub">${c.sub}</div></div>`).join('')+orbCard;
 
   const trades=d.trades||[];
   if(!trades.length){ $('tablewrap').innerHTML='<div class="empty">No trades logged yet. On the Signals page, click "Log this setup" to start tracking.</div>'; }

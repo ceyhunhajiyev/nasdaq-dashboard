@@ -7,10 +7,15 @@ are the real judge. This lets you compare live avg-R (per grade) to what the
 backtest suggested, so you find out whether the A/B setups actually pay for YOU.
 Not financial advice.
 """
-import json, time, threading
+import json, time, threading, os
 from pathlib import Path
+from . import settings as _settings  # noqa: F401  (ensures .env is loaded)
 
-JOURNAL_FILE = Path(__file__).resolve().parent.parent / "trades.json"
+# Journal location: set JOURNAL_PATH in .env to a cloud-synced folder (OneDrive,
+# Dropbox, Google Drive) to share the journal across machines. Falls back to a
+# local file in the project folder if unset.
+_jp = os.getenv("JOURNAL_PATH")
+JOURNAL_FILE = Path(_jp).expanduser() if _jp else (Path(__file__).resolve().parent.parent / "trades.json")
 _LOCK = threading.Lock()
 
 # instruments/timeframes the auto-scanner watches (only these can grade A or B)
@@ -22,6 +27,8 @@ OUTCOME_R = {"sl": -1.0, "be": 0.0, "tp1": 1.0, "tp2": 2.0}
 
 # rough backtest hint per grade (from the out-of-sample validation) — context only
 BACKTEST_HINT = {"A": 0.25, "B": 0.10, "C": 0.0, "D": -0.15}
+# ORB (trend + ATR1.0 stop + 1R target): ~+0.05R avg across indices, out-of-sample
+ORB_HINT = 0.05
 
 
 def _load():
@@ -32,6 +39,10 @@ def _load():
 
 
 def _save(trades):
+    try:
+        JOURNAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
     JOURNAL_FILE.write_text(json.dumps(trades, indent=2), encoding="utf-8")
 
 
@@ -41,7 +52,7 @@ def add(t: dict) -> dict:
         tid = (max((x["id"] for x in trades), default=0) + 1)
         rec = {"id": tid, "ts_open": time.time(), "status": "open",
                "result_R": None, "ts_close": None, "auto": bool(t.get("auto")),
-               "bar_time": t.get("bar_time"),
+               "bar_time": t.get("bar_time"), "strategy": t.get("strategy", "sweep"),
                "instrument": t.get("instrument"), "tf": t.get("tf"),
                "grade": t.get("grade"), "direction": t.get("direction"),
                "entry": t.get("entry"), "sl": t.get("sl"),
@@ -80,11 +91,33 @@ def auto_scan_and_log(provider) -> int:
                 tid = (max((x["id"] for x in trades), default=0) + 1)
                 trades.append({"id": tid, "ts_open": time.time(), "status": "open",
                                "result_R": None, "ts_close": None, "auto": True,
-                               "bar_time": sig.get("time"), "instrument": inst, "tf": tf,
+                               "bar_time": sig.get("time"), "strategy": "sweep",
+                               "instrument": inst, "tf": tf,
                                "grade": grade, "direction": sig["signal"],
                                "entry": sig["entry"], "sl": sig["sl"],
                                "tp1": sig["tp1"], "tp2": sig["tp2"], "note": ""})
                 added += 1
+        # --- ORB forward-tracking: auto-capture fresh trend/ATR/1R ORB signals
+        # (ungraded — this builds a live record to prove/disprove it forward)
+        for inst in ["US100", "SP500", "US30"]:
+            try:
+                d = S.build_signals(inst, provider, tf="15m", strategy="orb")
+            except Exception:
+                continue
+            det = d["signal"]; sig = det.get("last")
+            if not sig or not det.get("fresh"):
+                continue
+            if _exists(trades, inst, "15m", sig.get("time"), sig["signal"]):
+                continue
+            tid = (max((x["id"] for x in trades), default=0) + 1)
+            trades.append({"id": tid, "ts_open": time.time(), "status": "open",
+                           "result_R": None, "ts_close": None, "auto": True,
+                           "bar_time": sig.get("time"), "strategy": "orb",
+                           "instrument": inst, "tf": "15m",
+                           "grade": "ORB", "direction": sig["signal"],
+                           "entry": sig["entry"], "sl": sig["sl"],
+                           "tp1": sig["tp1"], "tp2": sig["tp2"], "note": ""})
+            added += 1
         if added:
             _save(trades)
     return added
@@ -110,18 +143,22 @@ def auto_resolve(provider) -> int:
                     cache[key] = []
             after = [b for b in cache[key] if b["time"] > bt]
             long = t["direction"] == "long"
+            # ORB's validated exit is 1R (tp1); sweep uses 2R (tp2)
+            orb = t.get("strategy") == "orb"
+            target = t["tp1"] if orb else t["tp2"]
+            win_R = 1.0 if orb else 2.0
             outcome = None
             for b in after:
                 if long:
                     if b["low"] <= t["sl"]:
                         outcome = -1.0; break
-                    if b["high"] >= t["tp2"]:
-                        outcome = 2.0; break
+                    if b["high"] >= target:
+                        outcome = win_R; break
                 else:
                     if b["high"] >= t["sl"]:
                         outcome = -1.0; break
-                    if b["low"] <= t["tp2"]:
-                        outcome = 2.0; break
+                    if b["low"] <= target:
+                        outcome = win_R; break
             if outcome is not None:
                 t["status"] = "closed"; t["result_R"] = outcome
                 t["ts_close"] = time.time(); t["auto_closed"] = True
@@ -164,13 +201,19 @@ def _agg(rows):
 def stats():
     trades = _load()
     closed = [t for t in trades if t["status"] == "closed" and t["result_R"] is not None]
+    sweep_closed = [t for t in closed if t.get("strategy", "sweep") == "sweep"]
+    orb_closed = [t for t in closed if t.get("strategy") == "orb"]
     by_grade = {}
     for g in ["A", "B", "C", "D"]:
-        a = _agg([t for t in closed if t["grade"] == g])
+        a = _agg([t for t in sweep_closed if t["grade"] == g])
         a["backtest_hint"] = BACKTEST_HINT.get(g)
         by_grade[g] = a
-    return {"overall": _agg(closed),
+    orb = _agg(orb_closed)
+    orb["backtest_hint"] = ORB_HINT
+    orb["open"] = len([t for t in trades if t.get("strategy") == "orb" and t["status"] == "open"])
+    return {"overall": _agg(sweep_closed),
             "by_grade": by_grade,
+            "orb": orb,
             "open": len([t for t in trades if t["status"] == "open"]),
             "closed": len(closed)}
 
